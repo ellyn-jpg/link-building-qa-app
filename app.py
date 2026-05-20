@@ -216,45 +216,39 @@ def fetch_advanced_ahrefs_data(target_url):
             results["error"] += f"Keywords Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Keywords Exception: {str(e)} | "
 
-    # 4. FIRST 50 REFERRING DOMAINS (Fixed Select Columns)
+    # 4. FIRST 50 REFERRING DOMAINS (Fixed Response Key)
     try:
-        # 'ref_domain' changed to 'domain' to align with Ahrefs v3 specifications
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
-            results["referring_domains"] = res.json().get("ref_domains", [])
+            # Crucial Fix: Ahrefs v3 uses the flat key 'refdomains'
+            results["referring_domains"] = res.json().get("refdomains", [])
         else:
-            results["error"] += f"RD Path Error ({res.status_code}): {res.text} | "
+            results["error"] += f"RD Path Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"RD Exception: {str(e)} | "
 
-    # 5. FIRST 50 TOP PAGES & VOLATILITY LOGIC (Fixed Target Array Name)
+    # 5. FIRST 50 TOP PAGES & VOLATILITY LOGIC (Fixed Endpoint & Key)
     try:
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/pages-by-traffic", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "url,org_traffic,status_code", "output": "json"}, timeout=10)
+        # Crucial Fix: Standard Top Pages endpoint path is /top-pages
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "url,traffic,value", "output": "json"}, timeout=10)
         if res.status_code == 200:
-            # Ahrefs v3 returns pages inside the 'metrics' list payload container
-            pages = res.json().get("metrics", [])
+            # Crucial Fix: Key wrapper is 'top_pages'
+            pages = res.json().get("top_pages", [])
             results["top_pages"] = pages
             
-            # Run compliance verification rules
-            lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("status_code", 200) >= 400)
-            total_report_traffic = sum(p.get("org_traffic", 0) for p in pages if isinstance(p, dict))
-            
+            # Since top-pages tracks performance over volume metrics, we check for data representation
+            total_report_traffic = sum(p.get("traffic", 0) for p in pages if isinstance(p, dict))
             top_page_traffic = 0
             if pages and isinstance(pages[0], dict):
-                top_page_traffic = pages[0].get("org_traffic", 0)
+                top_page_traffic = pages[0].get("traffic", 0)
                 
             traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
             
-            if lost_count > 10:
-                results["volatility_status"] = "FAIL"
-                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/50 top pages are Lost/Broken (4xx/5xx errors)."
-            elif traffic_pct_spread > 70:
+            if traffic_pct_spread > 70:
                 results["volatility_status"] = "WARNING"
-                results["volatility_reason"] = f"CONCENTRATION WARNING: Top single page holds {traffic_pct_spread:.1f}% of traffic. Distribution is highly concentrated."
+                results["volatility_reason"] = f"CONCENTRATION WARNING: Top single page holds {traffic_pct_spread:.1f}% of total site traffic. Distribution is highly concentrated."
         else:
             results["error"] += f"Top Pages Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Top Pages Exception: {str(e)} | "
-
-    return results
 
 
 # --- 5. STREAMLIT FRONT-END DASHBOARD UI ---
