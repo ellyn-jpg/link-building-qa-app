@@ -193,8 +193,9 @@ def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
         2. Topic Relevancy: Does the specific theme of this article make contextual sense to reference or talk about the 'Client Business Topic'?
         """
         
+        # We define a strict schema structure so Gemini outputs 100% predictable JSON
         response = gemini_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',  # <--- Upgraded to the current stable version
             contents=prompt,
             config=genai.types.GenerateContentConfig(
                 response_mime_type="application/json",
