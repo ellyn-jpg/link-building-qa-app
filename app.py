@@ -2,9 +2,15 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+import json
+from google import genai  # <--- Clean Gemini Import
 
-# Fetch the Ahrefs API key securely from Streamlit Secrets
+# Secure API Keys
 AHREFS_API_KEY = st.secrets.get("AHREFS_API_KEY", "")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+
+# Initialize Gemini Client
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 def get_domain_from_url(url):
     """Extracts the root domain (e.g., 'example.com') from a full URL."""
@@ -160,6 +166,56 @@ def fetch_ahrefs_dr(target_url):
     except Exception as e:
         return {"dr": "Error", "error": str(e)}
 
+def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
+    """Runs structural JSON relevancy audit using Gemini 1.5 Flash."""
+    if not gemini_client:
+        return {"niche_pass": "Error", "topic_pass": "Error", "reason": "Gemini API Key missing."}
+        
+    try:
+        soup = BeautifulSoup(page_html, 'html.parser')
+        for script in soup(["script", "style"]):
+            script.decompose()
+            
+        pure_text = soup.get_text(separator=' ')
+        truncated_text = " ".join(pure_text.split()[:1500])
+        
+        prompt = f"""
+        You are an expert SEO Quality Assurance Auditor. Analyze this article's content to determine its niche and topic contextual relevancy for a link placement.
+
+        Target Niche/Industry: {target_niche}
+        Client Business Topic/Core Product: {business_topic}
+
+        Article Content Snippet:
+        \"\"\"{truncated_text}\"\"\"
+
+        Evaluate:
+        1. Niche Relevancy: Is the website or article content contextually relevant or adjacent to the 'Target Niche'?
+        2. Topic Relevancy: Does the specific theme of this article make contextual sense to reference or talk about the 'Client Business Topic'?
+        """
+        
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema={
+                    "type": "OBJECT",
+                    "properties": {
+                        "niche_pass": {"type": "STRING", "enum": ["PASS", "FAIL"]},
+                        "topic_pass": {"type": "STRING", "enum": ["PASS", "FAIL"]},
+                        "reason": {"type": "STRING"}
+                    },
+                    "required": ["niche_pass", "topic_pass", "reason"]
+                },
+                temperature=0.1
+            )
+        )
+        
+        return json.loads(response.text)
+
+    except Exception as e:
+        return {"niche_pass": "Error", "topic_pass": "Error", "reason": f"Gemini Engine Exception: {str(e)}"}
+
 
 # --- STREAMLIT USER INTERFACE ---
 st.set_page_config(page_title="Link Building QA", page_icon="🔗", layout="centered")
@@ -184,18 +240,37 @@ if submitted:
     if not page_url or not target_url:
         st.error("❌ Please provide both the Live Page URL and Target URL to run the check.")
     else:
-        with st.spinner("Step 1/2: Scraping page HTML & checking guidelines..."):
+        # ==========================================
+        # 1. RUN ENGINE PROCESSING LAYER
+        # ==========================================
+        
+        with st.spinner("Step 1/3: Scraping page HTML & checking guidelines..."):
             qa_results = check_link_and_tags(page_url, target_url, anchor_text, brand_name)
             
-        with st.spinner("Step 2/2: Ping Ahrefs for Authority metrics..."):
+        with st.spinner("Step 2/3: Ping Ahrefs for Authority metrics..."):
             ahrefs_results = fetch_ahrefs_dr(page_url)
             
+        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+        raw_html_content = ""
+        try:
+            raw_html_content = requests.get(page_url, headers=headers, timeout=10).text
+        except Exception:
+            pass
+
+        with st.spinner("Step 3/3: Running contextual AI Relevancy Audit via Gemini..."):
+            ai_relevancy = analyze_relevancy_with_gemini(raw_html_content, target_niche, business_topic)
+            
+        # ==========================================
+        # 2. RENDER USER INTERFACE REPORT
+        # ==========================================
+        
         st.markdown("---")
-        st.subheader("📊 Audit Results Summary")
+        st.subheader("📊 Advanced Audit Results Summary")
         
         if qa_results["error"]:
             st.error(f"Scraping Error: {qa_results['error']}")
         else:
+            # High-Level Metrics Row
             m_col1, m_col2, m_col3 = st.columns(3)
             with m_col1:
                 st.metric(label="Domain Rating (DR)", value=f"DR {ahrefs_results['dr']}")
@@ -206,21 +281,60 @@ if submitted:
                 brand_status = "Found" if qa_results["brand_mentioned"] else "Missing"
                 st.metric(label="Brand Mention Check", value=brand_status)
             
-            st.markdown("### Detailed Checks")
+            # --- AI Relevancy Section ---
+            st.markdown("### 🧠 AI Context & Relevancy Engine")
+            ai_col1, ai_col2 = st.columns(2)
+            with ai_col1:
+                if ai_relevancy["niche_pass"] == "PASS":
+                    st.success(f"🎯 **Domain Niche:** PASS")
+                else:
+                    st.error(f"❌ **Domain Niche:** FAIL")
+                st.caption(f"Target Expectation: *{target_niche}*")
+                    
+            with ai_col2:
+                if ai_relevancy["topic_pass"] == "PASS":
+                    st.success(f"✍️ **Topic Alignment:** PASS")
+                else:
+                    st.error(f"❌ **Topic Alignment:** FAIL")
+                st.caption(f"Target Expectation: *{business_topic}*")
+                    
+            st.info(f"🤖 **AI Audit Insights:** {ai_relevancy['reason']}")
+
+            # --- Technical Risk Section ---
+            st.markdown("### 🔍 Risk & Quality Guardrails")
+            
+            if qa_results["is_redirecting"]:
+                st.warning(f"⚠️ **Redirect Detected:** The source URL undergoes a redirect. It lands at: `{qa_results['final_destination_url']}`")
+            else:
+                st.success("✅ **URL Redirect Status:** Clean. The page resolves with zero sneaky redirects.")
+                
+            if qa_results["is_ugc"]:
+                st.error(f"❌ **UGC Risk Found:** This page looks like a comment section, forum, or public blogging tier. Reason: *{qa_results['ugc_reason']}*")
+            else:
+                st.success("✅ **UGC Risk Evaluation:** Clean. Content looks like an editorial or standalone article.")
+                
+            if qa_results["listicle_top_3_pass"] == "PASS":
+                st.success(f"✅ **Listicle Placement:** Your brand '{brand_name}' was found within the top 3 items of the article headings!")
+            elif qa_results["listicle_top_3_pass"] == "FAIL":
+                st.error(f"❌ **Listicle Placement Failure:** This looks like a listicle, but your brand '{brand_name}' is buried below the top 3 spots.")
+
+            # --- Target Backlink Placement Section ---
+            st.markdown("### 🔗 Target Link Placement Verification")
             
             if qa_results["link_found"]:
-                st.success("✅ **Target URL Link Placement:** Link found live on the page.")
+                st.success("✅ **Link Discovery:** Target URL found live on the page layout.")
+                
                 if qa_results["anchor_matches"]:
-                    st.success(f"✅ **Anchor Text:** Exact or partial match found for: *'{anchor_text}'*")
+                    st.success(f"✅ **Anchor Text:** Match found for: *'{anchor_text}'*")
                 else:
-                    st.warning(f"⚠️ **Anchor Text Mismatch:** Target URL found, but anchor text looks different.")
+                    st.warning(f"⚠️ **Anchor Text Mismatch:** Link found, but anchor text does not match.")
                 
                 if qa_results["is_follow"]:
-                    st.success("✅ **Link Attribute:** Link is clean and passed juice (No 'nofollow', 'sponsored', or 'ugc' detected).")
+                    st.success("✅ **Link Attributes:** Clean DoFollow link (No 'nofollow', 'sponsored', or 'ugc' parameters found).")
                 else:
-                    st.error(f"❌ **Link Attribute Error:** Restrictive parameters found: `{qa_results['rel_tags']}`")
+                    st.error(f"❌ **Link Attribute Error:** Restrictive parameters found inside link tag: `{qa_results['rel_tags']}`")
             else:
-                st.error("❌ **Link Placement Failure:** The target URL could not be find anywhere in the page's HTML structure.")
+                st.error("❌ **Link Placement Failure:** The target URL could not be found anywhere in the page's HTML structure.")
                 
             if ahrefs_results["error"]:
                 st.caption(f"Ahrefs Debug Info: {ahrefs_results['error']}")
