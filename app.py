@@ -224,19 +224,24 @@ def fetch_advanced_ahrefs_data(target_url):
             results["referring_domains"] = res.json().get("refdomains", [])
     except Exception: pass
 
-    # 5. TOP PAGES (Fixed Select Column Mapping to http_code)
+    # 5. TOP PAGES (Aligned 100% with explicit Ahrefs v3 Allowed Columns)
     try:
-        # Ahrefs v3 uses 'http_code' instead of 'status_code' for Site Explorer top pages
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "url,traffic,http_code", "output": "json"}, timeout=10)
+        # 'traffic' updated to 'sum_traffic', structural attributes mapped to 'value' and 'keywords'
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "url,sum_traffic,value,keywords", "output": "json"}, timeout=10)
         if res.status_code == 200:
             pages = res.json().get("top_pages", [])
             results["top_pages"] = pages
             
-            # Profile health check (Flags if > 5 of your top 20 pages return a broken/dead server response)
-            lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("http_code", 200) >= 400)
-            if lost_count > 5:
-                results["volatility_status"] = "FAIL"
-                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/20 top pages are displaying dead HTTP codes."
+            # Distribution Concentration Check: Flags if a single page dominates the asset ecosystem
+            total_report_traffic = sum(p.get("sum_traffic", 0) for p in pages if isinstance(p, dict))
+            top_page_traffic = 0
+            if pages and isinstance(pages[0], dict):
+                top_page_traffic = pages[0].get("sum_traffic", 0)
+                
+            traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
+            if traffic_pct_spread > 70:
+                results["volatility_status"] = "WARNING"
+                results["volatility_reason"] = f"CONCENTRATION WARNING: Top single page holds {traffic_pct_spread:.1f}% of total site traffic. Distribution is highly concentrated."
         else:
             results["error"] += f"Top Pages Error ({res.status_code}): {res.text} | "
     except Exception as e: results["error"] += f"Top Pages Exception: {str(e)} | "
