@@ -128,43 +128,105 @@ def check_link_and_tags(page_url, target_url, expected_anchor, brand_name):
         results["error"] = str(e)
         return results
 
-def fetch_ahrefs_dr(target_url):
-    """Fetches the Domain Rating (DR) from Ahrefs API v3."""
+import datetime
+
+def fetch_advanced_ahrefs_data(target_url):
+    """
+    Queries Ahrefs v3 endpoints to pull DR, 6-Month Traffic History, 
+    Top Countries, and Sample Organic Keywords.
+    """
     domain = get_domain_from_url(target_url)
+    results = {
+        "dr": "N/A",
+        "traffic_history": None, # Will hold a dataframe for the chart
+        "top_countries": [],
+        "keywords": [],
+        "error": None
+    }
+    
     if not domain:
-        return {"dr": "N/A", "error": "Invalid target domain extracted."}
+        results["error"] = "Invalid target domain format."
+        return results
     if not AHREFS_API_KEY:
-        return {"dr": "N/A", "error": "Ahrefs API key is empty in Streamlit Secrets."}
-        
-    endpoint = "https://api.ahrefs.com/v3/site-explorer/domain-rating"
+        results["error"] = "Ahrefs API key configuration is missing."
+        return results
+
     headers = {
         "Authorization": f"Bearer {AHREFS_API_KEY}",
         "Accept": "application/json"
     }
     
-    # Ahrefs v3 STRICTLY requires target, date, and output fields. 
-    params = {
-        "target": domain,
-        "date": "2026-05-20",  # Always request yesterday's data to avoid timezone/data latency sync drops
-        "output": "json"
-    }
+    # Calculate Date Ranges for 6 months history
+    today = datetime.date.today()
+    six_months_ago = today - datetime.timedelta(days=180)
     
+    # ----------------------------------------------------
+    # ENDPOINT 1: FETCH DOMAIN RATING (DR)
+    # ----------------------------------------------------
     try:
-        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # Safely navigate the nested JSON response object from Ahrefs
-            dr_score = data.get("domain_rating", {}).get("domain_rating", 0)
-            return {"dr": dr_score, "error": None}
-        else:
-            # Let's extract any specific error messaging the server provides in the response payload
-            try:
-                server_message = response.json().get('error', response.text)
-            except Exception:
-                server_message = response.text
-            return {"dr": "Error", "error": f"Ahrefs API Error ({response.status_code}): {server_message}"}
+        dr_endpoint = "https://api.ahrefs.com/v3/site-explorer/domain-rating"
+        dr_params = {"target": domain, "date": today.strftime("%Y-%m-%d"), "output": "json"}
+        dr_res = requests.get(dr_endpoint, headers=headers, params=dr_params, timeout=10)
+        if dr_res.status_code == 200:
+            results["dr"] = dr_res.json().get("domain_rating", {}).get("domain_rating", 0)
     except Exception as e:
-        return {"dr": "Error", "error": str(e)}
+        pass
+
+    # ----------------------------------------------------
+    # ENDPOINT 2: FETCH 6-MONTH TRAFFIC HISTORY
+    # ----------------------------------------------------
+    try:
+        history_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-history"
+        history_params = {
+            "target": domain,
+            "date_from": six_months_ago.strftime("%Y-%m-%d"),
+            "date_to": today.strftime("%Y-%m-%d"),
+            "history_grouping": "monthly",
+            "output": "json"
+            # Default select returns: date, org_traffic
+        }
+        hist_res = requests.get(history_endpoint, headers=headers, params=history_params, timeout=10)
+        if hist_res.status_code == 200:
+            raw_metrics = hist_res.json().get("metrics", [])
+            # Sort chronologically by date
+            sorted_metrics = sorted(raw_metrics, key=lambda x: x.get('date', ''))
+            results["traffic_history"] = sorted_metrics
+    except Exception as e:
+        pass
+
+    # ----------------------------------------------------
+    # ENDPOINT 3: FETCH TOP GEOGRAPHIC REGIONS
+    # ----------------------------------------------------
+    try:
+        geo_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-by-country"
+        geo_params = {"target": domain, "output": "json"}
+        geo_res = requests.get(geo_endpoint, headers=headers, params=geo_params, timeout=10)
+        if geo_res.status_code == 200:
+            # Sort breakdown by traffic volume descending, take top 5
+            countries = geo_res.json().get("metrics", [])
+            sorted_countries = sorted(countries, key=lambda x: x.get('org_traffic', 0), reverse=True)
+            results["top_countries"] = sorted_countries[:5]
+    except Exception as e:
+        pass
+
+    # ----------------------------------------------------
+    # ENDPOINT 4: FETCH SAMPLE ORGANIC KEYWORDS (Top 20 for brief summary)
+    # ----------------------------------------------------
+    try:
+        kw_endpoint = "https://api.ahrefs.com/v3/site-explorer/organic-keywords"
+        kw_params = {
+            "target": domain, 
+            "limit": 20, 
+            "select": "keyword,position,volume,traffic", 
+            "output": "json"
+        }
+        kw_res = requests.get(kw_endpoint, headers=headers, params=kw_params, timeout=10)
+        if kw_res.status_code == 200:
+            results["keywords"] = kw_res.json().get("keywords", [])
+    except Exception as e:
+        pass
+
+    return results
 
 def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
     """Runs structural JSON relevancy audit using Gemini 1.5 Flash."""
@@ -245,15 +307,15 @@ if submitted:
     if not page_url or not target_url:
         st.error("❌ Please provide both the Live Page URL and Target URL to run the check.")
     else:
-        # Step 1: Execute local rule scraper module
+        # Step 1: Run local scraper
         with st.spinner("Step 1/3: Scraping page HTML & checking guidelines..."):
             qa_results = check_link_and_tags(page_url, target_url, anchor_text, brand_name)
             
-        # Step 2: Execute Ahrefs API module
-        with st.spinner("Step 2/3: Ping Ahrefs for Authority metrics..."):
-            ahrefs_results = fetch_ahrefs_dr(page_url)
+        # Step 2: Query Advanced Ahrefs Profiles
+        with st.spinner("Step 2/3: Gathering advanced traffic, regional, and keyword graphs from Ahrefs..."):
+            ahrefs_results = fetch_advanced_ahrefs_data(page_url)
             
-        # Step 3: Extract clean HTML string copy and feed the Gemini engine
+        # Step 3: Run Gemini Evaluation
         headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
         raw_html_content = ""
         try:
@@ -262,83 +324,113 @@ if submitted:
             pass
 
         with st.spinner("Step 3/3: Running contextual AI Relevancy Audit via Gemini..."):
-            # Variables here match the exact text_input names declared right above
             ai_relevancy = analyze_relevancy_with_gemini(raw_html_content, target_niche, business_topic)
             
         # ==========================================
-        # RENDER USER INTERFACE AUDIT REPORT
+        # RENDER DASHBOARD INTERFACE
         # ==========================================
         st.markdown("---")
-        st.subheader("📊 Advanced Audit Results Summary")
+        st.subheader("📊 Live Backlink Audit Report")
         
         if qa_results["error"]:
             st.error(f"Scraping Error: {qa_results['error']}")
         else:
-            # Main high-level dashboard counters
+            # Top-Level Core Metric Highlights
             m_col1, m_col2, m_col3 = st.columns(3)
             with m_col1:
-                st.metric(label="Domain Rating (DR)", value=f"DR {ahrefs_results['dr']}")
+                st.metric(label="Domain Rating", value=f"DR {ahrefs_results['dr']}")
             with m_col2:
                 status = "Indexable" if qa_results["is_indexable"] else "NoIndex ❌"
                 st.metric(label="Crawler Index Status", value=status)
             with m_col3:
                 brand_status = "Found" if qa_results["brand_mentioned"] else "Missing"
-                st.metric(label="Brand Mention Check", value=brand_status)
+                st.metric(label="Brand Mention", value=brand_status)
+                
+            # --- CREATING CLEAN VISUAL TABS ---
+            tab1, tab2, tab3 = st.tabs(["🔒 Compliance & Placement Rules", "📈 Traffic & Keyword Health", "🧠 Contextual Relevancy"])
             
-            # --- AI Relevancy Visualization Cards ---
-            st.markdown("### 🧠 AI Context & Relevancy Engine")
-            ai_col1, ai_col2 = st.columns(2)
-            with ai_col1:
-                if ai_relevancy["niche_pass"] == "PASS":
-                    st.success(f"🎯 **Domain Niche:** PASS")
+            # --- TAB 1: SCRAPER COMPLIANCE ---
+            with tab1:
+                st.markdown("### Technical Risk Assessment")
+                if qa_results["is_redirecting"]:
+                    st.warning(f"⚠️ **Redirect Alert:** Link hops to: `{qa_results['final_destination_url']}`")
                 else:
-                    st.error(f"❌ **Domain Niche:** FAIL")
-                st.caption(f"Target Expectation: *{target_niche}*")
+                    st.success("✅ **Redirect Check:** URL resolves directly without adjustments.")
                     
-            with ai_col2:
-                if ai_relevancy["topic_pass"] == "PASS":
-                    st.success(f"✍️ **Topic Alignment:** PASS")
+                if qa_results["is_ugc"]:
+                    st.error(f"❌ **UGC Signal Found:** Flagged comment/forum footprint: *{qa_results['ugc_reason']}*")
                 else:
-                    st.error(f"❌ **Topic Alignment:** FAIL")
-                st.caption(f"Target Expectation: *{business_topic}*")
+                    st.success("✅ **UGC Profile Check:** Structured as editorial news/article space.")
                     
-            st.info(f"🤖 **AI Audit Insights:** {ai_relevancy['reason']}")
+                if qa_results["listicle_top_3_pass"] == "PASS":
+                    st.success(f"✅ **Listicle Spotting:** Brand '{brand_name}' ranked in top 3 headings!")
+                elif qa_results["listicle_top_3_pass"] == "FAIL":
+                    st.error(f"❌ **Listicle Hierarchy Failure:** Brand '{brand_name}' is sitting below item entry 3.")
 
-            # --- Technical Risk Analysis Cards ---
-            st.markdown("### 🔍 Risk & Quality Guardrails")
-            
-            if qa_results["is_redirecting"]:
-                st.warning(f"⚠️ **Redirect Detected:** The source URL undergoes a redirect. It lands at: `{qa_results['final_destination_url']}`")
-            else:
-                st.success("✅ **URL Redirect Status:** Clean. The page resolves with zero sneaky redirects.")
-                
-            if qa_results["is_ugc"]:
-                st.error(f"❌ **UGC Risk Found:** This page looks like a comment section, forum, or public blogging tier. Reason: *{qa_results['ugc_reason']}*")
-            else:
-                st.success("✅ **UGC Risk Evaluation:** Clean. Content looks like an editorial or standalone article.")
-                
-            if qa_results["listicle_top_3_pass"] == "PASS":
-                st.success(f"✅ **Listicle Placement:** Your brand '{brand_name}' was found within the top 3 items of the article headings!")
-            elif qa_results["listicle_top_3_pass"] == "FAIL":
-                st.error(f"❌ **Listicle Placement Failure:** This looks like a listicle, but your brand '{brand_name}' is buried below the top 3 spots.")
+                st.markdown("---")
+                st.markdown("### Anchor Link Delivery Verification")
+                if qa_results["link_found"]:
+                    st.success("✅ **Link Footprint:** Verified matching target URL destination.")
+                    if qa_results["anchor_matches"]:
+                        st.success(f"✅ **Anchor Framework:** Text matches: *'{anchor_text}'*")
+                    else:
+                        st.warning("⚠️ **Anchor Framework Discrepancy:** URL matches, text does not.")
+                    if qa_results["is_follow"]:
+                        st.success("✅ **SEO Attribution:** Standard follow link.")
+                    else:
+                        st.error(f"❌ **SEO Attribution Failure:** Contains negative parameters: `{qa_results['rel_tags']}`")
+                else:
+                    st.error("❌ **Link Asset Missing:** Destination domain was completely missing from the markup framework.")
 
-            # --- Target Backlink Placement Verification ---
-            st.markdown("### 🔗 Target Link Placement Verification")
-            
-            if qa_results["link_found"]:
-                st.success("✅ **Link Discovery:** Target URL found live on the page layout.")
+            # --- TAB 2: ADVANCED TRAFFIC & KEYWORDS ---
+            with tab2:
+                st.markdown("### Ahrefs Traffic & Performance Audit")
                 
-                if qa_results["anchor_matches"]:
-                    st.success(f"✅ **Anchor Text:** Match found for: *'{anchor_text}'*")
+                # Plot 6 Month Historical Trend Line
+                if ahrefs_results["traffic_history"]:
+                    st.markdown("#### 📉 6-Month Organic Traffic Performance Trend")
+                    dates = [item.get('date') for item in ahrefs_results["traffic_history"]]
+                    traffic = [item.get('org_traffic', 0) for item in ahrefs_results["traffic_history"]]
+                    
+                    # Renders a native line chart inside Streamlit
+                    st.line_chart(data=dict(zip(dates, traffic)))
                 else:
-                    st.warning(f"⚠️ **Anchor Text Mismatch:** Link found, but anchor text does not match.")
+                    st.caption("Historical traffic trend line unavailable for this host profile.")
                 
-                if qa_results["is_follow"]:
-                    st.success("✅ **Link Attributes:** Clean DoFollow link (No 'nofollow', 'sponsored', or 'ugc' parameters found).")
-                else:
-                    st.error(f"❌ **Link Attribute Error:** Restrictive parameters found inside link tag: `{qa_results['rel_tags']}`")
-            else:
-                st.error("❌ **Link Placement Failure:** The target URL could not be found anywhere in the page's HTML structure.")
+                col_left, col_right = st.columns(2)
                 
-            if ahrefs_results["error"]:
-                st.caption(f"Ahrefs Debug Info: {ahrefs_results['error']}")
+                with col_left:
+                    st.markdown("#### 🌍 Top Traffic Regions")
+                    if ahrefs_results["top_countries"]:
+                        for item in ahrefs_results["top_countries"]:
+                            st.write(f"🏳️‍🌈 **{item.get('country', 'Unknown')}**: {item.get('org_traffic', 0):,} organic visitors/mo")
+                    else:
+                        st.caption("No geographical distribution profiles found.")
+                        
+                with col_right:
+                    st.markdown("#### 🔤 Organic Keyword Samples")
+                    if ahrefs_results["keywords"]:
+                        for item in ahrefs_results["keywords"]:
+                            st.write(f"🔑 *{item.get('keyword')}* (Pos: #{item.get('position')} | Vol: {item.get('volume', 0):,})")
+                    else:
+                        st.caption("No matching organic keyword ranks observed.")
+
+            # --- TAB 3: AI CONTEXT AND RELEVANCY ---
+            with tab3:
+                st.markdown("### Contextual Evaluation Engine")
+                ai_col1, ai_col2 = st.columns(2)
+                with ai_col1:
+                    if ai_relevancy["niche_pass"] == "PASS":
+                        st.success(f"🎯 **Niche Guardrail:** PASS")
+                    else:
+                        st.error(f"❌ **Niche Guardrail:** FAIL")
+                    st.caption(f"Target Niche Profile: *{target_niche}*")
+                        
+                with ai_col2:
+                    if ai_relevancy["topic_pass"] == "PASS":
+                        st.success(f"✍️ **Topic Alignment:** PASS")
+                    else:
+                        st.error(f"❌ **Topic Alignment:** FAIL")
+                    st.caption(f"Business Theme Profile: *{business_topic}*")
+                        
+                st.info(f"🤖 **AI Evaluation Reasoning:** {ai_relevancy['reason']}")
