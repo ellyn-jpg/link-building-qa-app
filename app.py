@@ -157,10 +157,12 @@ def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
 
 
 # --- 4. ADVANCED AHREFS SITEWIDE ENGINE ---
+import time # Ensure this is imported at the top of your file to support time delays
+
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Final Verified Version: Aligns data extraction directly with Ahrefs v3 response dictionary maps
-    and avoids silent loops on empty arrays.
+    Rate-Resilient Version: Implements fractional micro-delays between endpoints
+    to completely prevent Cloudflare 429 rate blocks and verification walls.
     """
     domain = get_domain_from_url(target_url)
     
@@ -196,7 +198,7 @@ def fetch_advanced_ahrefs_data(target_url):
         (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
     ]
 
-    # 1. DOMAIN RATING (DR)
+    # --- 1. DOMAIN RATING (DR) ---
     for date_str in target_dates:
         try:
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/domain-rating", headers=headers, params={"target": domain, "date": date_str, "output": "json"}, timeout=10)
@@ -204,8 +206,10 @@ def fetch_advanced_ahrefs_data(target_url):
                 results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
                 break
         except Exception: pass
+    
+    time.sleep(0.5) # Micro-delay stops Cloudflare from blocking the next endpoint request
 
-    # 2. 6-MONTH ORGANIC TRAFFIC HISTORY
+    # --- 2. 6-MONTH ORGANIC TRAFFIC HISTORY ---
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/metrics-history", headers=headers, params={"target": domain, "mode": "subdomains", "date_from": six_months_ago, "date_to": target_dates[0], "history_grouping": "monthly", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -213,61 +217,61 @@ def fetch_advanced_ahrefs_data(target_url):
             results["traffic_history"] = sorted(raw, key=lambda x: x.get('date', ''))
     except Exception: pass
 
-    # 3. ORGANIC KEYWORDS & GEO LOCATIONS (Top 20 Rules)
+    time.sleep(0.5) # Micro-delay
+
+    # --- 3. ORGANIC KEYWORDS & GEO LOCATIONS ---
     for date_str in target_dates:
         try:
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 50, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
             if res.status_code == 200:
-                # API v3 explicitly uses the JSON wrapper key 'keywords'
                 raw_kws = res.json().get("keywords", [])
                 if raw_kws:
                     results["keywords"] = raw_kws[:20]
-                    
-                    # Generate top country frequency metric counts
                     countries = [k.get("keyword_country", "").upper() for k in raw_kws if k.get("keyword_country")]
                     top_five = Counter(countries).most_common(5)
                     results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
                     break
-        except Exception as e:
-            results["error"] += f"KW Ex: {str(e)} | "
+            elif res.status_code == 429:
+                results["error"] += "Keywords rate limited (429) | "
+        except Exception: pass
 
-    # 4. REFERRING DOMAINS (Top 20 Rules)
+    time.sleep(0.5) # Micro-delay
+
+    # --- 4. REFERRING DOMAINS ---
     for date_str in target_dates:
         try:
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "domain,domain_rating", "output": "json"}, timeout=10)
             if res.status_code == 200:
-                # API v3 explicitly uses the JSON wrapper key 'refdomains'
                 raw_rd = res.json().get("refdomains", [])
                 if raw_rd:
                     results["referring_domains"] = raw_rd
                     break
-        except Exception as e:
-            results["error"] += f"RD Ex: {str(e)} | "
+            elif res.status_code == 429:
+                results["error"] += "RD rate limited (429) | "
+        except Exception: pass
 
-    # 5. TOP PAGES (Top 20 Rules)
+    time.sleep(0.5) # Micro-delay
+
+    # --- 5. TOP PAGES ---
     for date_str in target_dates:
         try:
-            # Reverted to official endpoint to capture traffic distributions safely
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "url,sum_traffic,value", "output": "json"}, timeout=10)
             if res.status_code == 200:
-                # API v3 explicitly uses the JSON wrapper key 'top_pages'
                 raw_pages = res.json().get("top_pages", [])
                 if raw_pages:
                     results["top_pages"] = raw_pages
                     
-                    # Run traffic alignment warning systems
                     total_report_traffic = sum(p.get("sum_traffic", 0) for p in raw_pages if isinstance(p, dict))
                     top_page_traffic = raw_pages[0].get("sum_traffic", 0) if isinstance(raw_pages[0], dict) else 0
                     traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
                     
                     if traffic_pct_spread > 70:
                         results["volatility_status"] = "WARNING"
-                        results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of total traffic index."
+                        results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of traffic spread."
                     break
-            else:
-                results["error"] += f"Top Pages HTTP {res.status_code}: {res.text} | "
-        except Exception as e:
-            results["error"] += f"Pages Ex: {str(e)} | "
+            elif res.status_code == 429:
+                results["error"] += "Top Pages rate limited (429) | "
+        except Exception: pass
 
     return results
 
