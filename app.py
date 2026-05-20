@@ -132,13 +132,15 @@ import datetime
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Queries Ahrefs v3 endpoints to pull DR, 6-Month Traffic History, 
-    Top Countries, and Sample Organic Keywords.
+    Safely queries Ahrefs v3 endpoints to pull sitewide metrics.
+    Uses strict error handling to ensure individual API failures don't crash the app.
     """
     domain = get_domain_from_url(target_url)
+    
+    # Initialize defaults so every key GUARANTEES a value exists
     results = {
         "dr": "N/A",
-        "traffic_history": None, # Will hold a dataframe for the chart
+        "traffic_history": None,
         "top_countries": [],
         "keywords": [],
         "error": None
@@ -156,7 +158,6 @@ def fetch_advanced_ahrefs_data(target_url):
         "Accept": "application/json"
     }
     
-    # Calculate Date Ranges for 6 months history
     today = datetime.date.today()
     six_months_ago = today - datetime.timedelta(days=180)
     
@@ -168,9 +169,12 @@ def fetch_advanced_ahrefs_data(target_url):
         dr_params = {"target": domain, "date": today.strftime("%Y-%m-%d"), "output": "json"}
         dr_res = requests.get(dr_endpoint, headers=headers, params=dr_params, timeout=10)
         if dr_res.status_code == 200:
-            results["dr"] = dr_res.json().get("domain_rating", {}).get("domain_rating", 0)
+            results["dr"] = dr_res.json().get("domain_rating", {}).get("domain_rating", "N/A")
+        else:
+            results["dr"] = "Error"
+            results["error"] = f"DR API returned status {dr_res.status_code}"
     except Exception as e:
-        pass
+        results["dr"] = "N/A"
 
     # ----------------------------------------------------
     # ENDPOINT 2: FETCH 6-MONTH TRAFFIC HISTORY
@@ -179,29 +183,27 @@ def fetch_advanced_ahrefs_data(target_url):
         history_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-history"
         history_params = {
             "target": domain,
+            "mode": "subdomains",
             "date_from": six_months_ago.strftime("%Y-%m-%d"),
             "date_to": today.strftime("%Y-%m-%d"),
             "history_grouping": "monthly",
             "output": "json"
-            # Default select returns: date, org_traffic
         }
         hist_res = requests.get(history_endpoint, headers=headers, params=history_params, timeout=10)
         if hist_res.status_code == 200:
             raw_metrics = hist_res.json().get("metrics", [])
-            # Sort chronologically by date
-            sorted_metrics = sorted(raw_metrics, key=lambda x: x.get('date', ''))
-            results["traffic_history"] = sorted_metrics
-    except Exception as e:
-        pass
+            results["traffic_history"] = sorted(raw_metrics, key=lambda x: x.get('date', ''))
+    except Exception:
+        pass # If traffic history fails, keep moving silently
 
     # ----------------------------------------------------
-    # ENDPOINT 3: FETCH TOP GEOGRAPHIC REGIONS (Fixed Target)
+    # ENDPOINT 3: FETCH TOP GEOGRAPHIC REGIONS
     # ----------------------------------------------------
     try:
         geo_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-by-country"
         geo_params = {
-            "target": domain,            # <-- Ensure this is domain, not page_url
-            "mode": "subdomains",        # <-- Tells Ahrefs to look at the whole site
+            "target": domain,
+            "mode": "subdomains",
             "output": "json"
         }
         geo_res = requests.get(geo_endpoint, headers=headers, params=geo_params, timeout=10)
@@ -209,17 +211,17 @@ def fetch_advanced_ahrefs_data(target_url):
             countries = geo_res.json().get("metrics", [])
             sorted_countries = sorted(countries, key=lambda x: x.get('org_traffic', 0), reverse=True)
             results["top_countries"] = sorted_countries[:5]
-    except Exception as e:
+    except Exception:
         pass
 
     # ----------------------------------------------------
-    # ENDPOINT 4: FETCH SAMPLE ORGANIC KEYWORDS (Fixed Target)
+    # ENDPOINT 4: FETCH SAMPLE ORGANIC KEYWORDS
     # ----------------------------------------------------
     try:
         kw_endpoint = "https://api.ahrefs.com/v3/site-explorer/organic-keywords"
         kw_params = {
-            "target": domain,            # <-- Ensure this is domain, not page_url
-            "mode": "subdomains",        # <-- Tells Ahrefs to look at the whole site
+            "target": domain, 
+            "mode": "subdomains",
             "limit": 20, 
             "select": "keyword,position,volume,traffic", 
             "output": "json"
@@ -227,8 +229,10 @@ def fetch_advanced_ahrefs_data(target_url):
         kw_res = requests.get(kw_endpoint, headers=headers, params=kw_params, timeout=10)
         if kw_res.status_code == 200:
             results["keywords"] = kw_res.json().get("keywords", [])
-    except Exception as e:
+    except Exception:
         pass
+
+    return results
 
 def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
     """Runs structural JSON relevancy audit using Gemini 1.5 Flash."""
