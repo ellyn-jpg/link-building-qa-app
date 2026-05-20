@@ -195,14 +195,17 @@ def fetch_advanced_ahrefs_data(target_url):
         pass
 
     # ----------------------------------------------------
-    # ENDPOINT 3: FETCH TOP GEOGRAPHIC REGIONS
+    # ENDPOINT 3: FETCH TOP GEOGRAPHIC REGIONS (Fixed Target)
     # ----------------------------------------------------
     try:
         geo_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-by-country"
-        geo_params = {"target": domain, "output": "json"}
+        geo_params = {
+            "target": domain,            # <-- Ensure this is domain, not page_url
+            "mode": "subdomains",        # <-- Tells Ahrefs to look at the whole site
+            "output": "json"
+        }
         geo_res = requests.get(geo_endpoint, headers=headers, params=geo_params, timeout=10)
         if geo_res.status_code == 200:
-            # Sort breakdown by traffic volume descending, take top 5
             countries = geo_res.json().get("metrics", [])
             sorted_countries = sorted(countries, key=lambda x: x.get('org_traffic', 0), reverse=True)
             results["top_countries"] = sorted_countries[:5]
@@ -210,12 +213,13 @@ def fetch_advanced_ahrefs_data(target_url):
         pass
 
     # ----------------------------------------------------
-    # ENDPOINT 4: FETCH SAMPLE ORGANIC KEYWORDS (Top 20 for brief summary)
+    # ENDPOINT 4: FETCH SAMPLE ORGANIC KEYWORDS (Fixed Target)
     # ----------------------------------------------------
     try:
         kw_endpoint = "https://api.ahrefs.com/v3/site-explorer/organic-keywords"
         kw_params = {
-            "target": domain, 
+            "target": domain,            # <-- Ensure this is domain, not page_url
+            "mode": "subdomains",        # <-- Tells Ahrefs to look at the whole site
             "limit": 20, 
             "select": "keyword,position,volume,traffic", 
             "output": "json"
@@ -225,8 +229,6 @@ def fetch_advanced_ahrefs_data(target_url):
             results["keywords"] = kw_res.json().get("keywords", [])
     except Exception as e:
         pass
-
-    return results
 
 def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
     """Runs structural JSON relevancy audit using Gemini 1.5 Flash."""
