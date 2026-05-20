@@ -158,7 +158,10 @@ def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
 
 # --- 4. ADVANCED AHREFS SITEWIDE ENGINE ---
 def fetch_advanced_ahrefs_data(target_url):
-    """Queries Ahrefs v3 to process sitewide profiles: DR, traffic trends, pages distribution & keyword lists."""
+    """
+    Patched Ahrefs v3 Data Function: Fixes RD endpoint pathing 
+    and aligns Top Pages payload arrays with correct schemas.
+    """
     domain = get_domain_from_url(target_url)
     results = {
         "dr": "N/A",
@@ -199,14 +202,13 @@ def fetch_advanced_ahrefs_data(target_url):
             results["traffic_history"] = sorted(raw, key=lambda x: x.get('date', ''))
     except Exception: pass
 
-    # 3. TOP 50 ORGANIC KEYWORDS & TOP 5 COUNTRIES EXTRACTION
+    # 3. SAMPLE ORGANIC KEYWORDS & TOP 5 COUNTRIES EXTRACTION
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 100, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
         if res.status_code == 200:
             raw_kws = res.json().get("keywords", [])
-            results["keywords"] = raw_kws[:50] # Store first 50 lines for the report table
+            results["keywords"] = raw_kws[:50]
             
-            # Count country presence over 100 lines to build Top 5 Country metrics safely
             countries = [k.get("keyword_country", "").upper() for k in raw_kws if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
@@ -214,37 +216,41 @@ def fetch_advanced_ahrefs_data(target_url):
             results["error"] += f"Keywords Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Keywords Exception: {str(e)} | "
 
-    # 4. FIRST 50 REFERRING DOMAINS (RD)
+    # 4. FIRST 50 REFERRING DOMAINS (Fixed Endpoint Path)
     try:
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/referring-domains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "ref_domain,domain_rating", "output": "json"}, timeout=10)
+        # Endpoint path changed from /referring-domains to /refdomains
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "ref_domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
+            # Payload array key maps to ref_domains
             results["referring_domains"] = res.json().get("ref_domains", [])
         else:
-            results["error"] += f"RD Error ({res.status_code}) | "
+            results["error"] += f"RD Path Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"RD Exception: {str(e)} | "
 
-    # 5. FIRST 50 TOP PAGES & VOLATILITY SYSTEMS
+    # 5. FIRST 50 TOP PAGES & VOLATILITY LOGIC (Fixed Target Array Name)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/pages-by-traffic", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "url,org_traffic,status_code", "output": "json"}, timeout=10)
         if res.status_code == 200:
-            pages = res.json().get("pages", [])
+            # Ahrefs v3 returns pages inside the 'metrics' list payload container
+            pages = res.json().get("metrics", [])
             results["top_pages"] = pages
             
-            # Math A: Count Lost/Broken Status links
-            lost_count = sum(1 for p in pages if p.get("status_code", 200) >= 400)
+            # Run compliance verification rules
+            lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("status_code", 200) >= 400)
+            total_report_traffic = sum(p.get("org_traffic", 0) for p in pages if isinstance(p, dict))
             
-            # Math B: Calculate Traffic Spread Concentration
-            total_report_traffic = sum(p.get("org_traffic", 0) for p in pages)
-            top_page_traffic = pages[0].get("org_traffic", 0) if pages else 0
+            top_page_traffic = 0
+            if pages and isinstance(pages[0], dict):
+                top_page_traffic = pages[0].get("org_traffic", 0)
+                
             traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
             
-            # Flag Alerts
             if lost_count > 10:
                 results["volatility_status"] = "FAIL"
                 results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/50 top pages are Lost/Broken (4xx/5xx errors)."
             elif traffic_pct_spread > 70:
                 results["volatility_status"] = "WARNING"
-                results["volatility_reason"] = f"CONCENTRATION WARNING: Top single page holds {traffic_pct_spread:.1f}% of total site traffic. Distribution is unbalanced."
+                results["volatility_reason"] = f"CONCENTRATION WARNING: Top single page holds {traffic_pct_spread:.1f}% of traffic. Distribution is highly concentrated."
         else:
             results["error"] += f"Top Pages Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Top Pages Exception: {str(e)} | "
