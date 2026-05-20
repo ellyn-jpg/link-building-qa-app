@@ -237,12 +237,14 @@ def fetch_advanced_ahrefs_data(target_url):
                     break
         except Exception: pass
 
-    # --- 5. FIRST 20 TOP PAGES (Rolling Data Fallback) ---
+    # --- 5. FIRST 20 TOP PAGES (Fixed Endpoint Path & Key Mapping) ---
     for date_str in target_dates:
         try:
-            res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "url,sum_traffic,value,keywords", "output": "json"}, timeout=10)
+            # Endpoint path corrected to /top-subpages to match live Site Explorer Top Pages array
+            res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-subpages", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "url,sum_traffic,top_keyword", "output": "json"}, timeout=10)
             if res.status_code == 200:
-                pages = res.json().get("top_pages", [])
+                # Key wrapper for this endpoint maps to 'subpages'
+                pages = res.json().get("subpages", [])
                 if pages:
                     results["top_pages"] = pages
                     
@@ -252,7 +254,7 @@ def fetch_advanced_ahrefs_data(target_url):
                     
                     if traffic_pct_spread > 70:
                         results["volatility_status"] = "WARNING"
-                        results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of total site traffic."
+                        results["volatility_reason"] = f"CONCENTRATION WARNING: Top single subpage holds {traffic_pct_spread:.1f}% of total site traffic."
                     break
         except Exception: pass
 
