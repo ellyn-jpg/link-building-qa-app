@@ -224,20 +224,21 @@ def fetch_advanced_ahrefs_data(target_url):
             results["referring_domains"] = res.json().get("refdomains", [])
     except Exception: pass
 
-    # 5. TOP PAGES (Reduced to 20 items with Traffic and Status Code)
+    # 5. TOP PAGES (Fixed Select Column Mapping to http_code)
     try:
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "url,traffic,status_code", "output": "json"}, timeout=10)
+        # Ahrefs v3 uses 'http_code' instead of 'status_code' for Site Explorer top pages
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "url,traffic,http_code", "output": "json"}, timeout=10)
         if res.status_code == 200:
             pages = res.json().get("top_pages", [])
             results["top_pages"] = pages
             
-            # Profile health check (Flags if > 5 of your top 20 pages are completely dead)
-            lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("status_code", 200) >= 400)
+            # Profile health check (Flags if > 5 of your top 20 pages return a broken/dead server response)
+            lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("http_code", 200) >= 400)
             if lost_count > 5:
                 results["volatility_status"] = "FAIL"
-                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/20 top pages are displaying broken status codes."
+                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/20 top pages are displaying dead HTTP codes."
         else:
-            results["error"] += f"Top Pages Error ({res.status_code}) | "
+            results["error"] += f"Top Pages Error ({res.status_code}): {res.text} | "
     except Exception as e: results["error"] += f"Top Pages Exception: {str(e)} | "
 
     return results
