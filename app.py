@@ -74,17 +74,21 @@ def check_link_and_tags(page_url, target_url, expected_anchor, brand_name):
 def fetch_ahrefs_dr(target_url):
     """Fetches the Domain Rating (DR) from Ahrefs API v3."""
     domain = get_domain_from_url(target_url)
-    if not domain or not AHREFS_API_KEY:
-        return {"dr": "N/A", "error": "Missing domain or Ahrefs API key configuration."}
+    if not domain:
+        return {"dr": "N/A", "error": "Invalid target domain extracted."}
+    if not AHREFS_API_KEY:
+        return {"dr": "N/A", "error": "Ahrefs API key is empty in Streamlit Secrets."}
         
     endpoint = "https://api.ahrefs.com/v3/site-explorer/domain-rating"
     headers = {
         "Authorization": f"Bearer {AHREFS_API_KEY}",
         "Accept": "application/json"
     }
+    
+    # Ahrefs v3 STRICTLY requires target, date, and output fields. 
     params = {
         "target": domain,
-        "date": "2026-05-21",
+        "date": "2026-05-20",  # Always request yesterday's data to avoid timezone/data latency sync drops
         "output": "json"
     }
     
@@ -92,10 +96,16 @@ def fetch_ahrefs_dr(target_url):
         response = requests.get(endpoint, headers=headers, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
+            # Safely navigate the nested JSON response object from Ahrefs
             dr_score = data.get("domain_rating", {}).get("domain_rating", 0)
             return {"dr": dr_score, "error": None}
         else:
-            return {"dr": "Error", "error": f"Ahrefs API Error ({response.status_code})"}
+            # Let's extract any specific error messaging the server provides in the response payload
+            try:
+                server_message = response.json().get('error', response.text)
+            except Exception:
+                server_message = response.text
+            return {"dr": "Error", "error": f"Ahrefs API Error ({response.status_code}): {server_message}"}
     except Exception as e:
         return {"dr": "Error", "error": str(e)}
 
