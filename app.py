@@ -216,15 +216,14 @@ def fetch_advanced_ahrefs_data(target_url):
             results["error"] += f"Keywords Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Keywords Exception: {str(e)} | "
 
-    # 4. FIRST 50 REFERRING DOMAINS (Fixed Endpoint Path)
+    # 4. FIRST 50 REFERRING DOMAINS (Fixed Select Columns)
     try:
-        # Endpoint path changed from /referring-domains to /refdomains
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "ref_domain,domain_rating", "output": "json"}, timeout=10)
+        # 'ref_domain' changed to 'domain' to align with Ahrefs v3 specifications
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 50, "select": "domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
-            # Payload array key maps to ref_domains
             results["referring_domains"] = res.json().get("ref_domains", [])
         else:
-            results["error"] += f"RD Path Error ({res.status_code}) | "
+            results["error"] += f"RD Path Error ({res.status_code}): {res.text} | "
     except Exception as e: results["error"] += f"RD Exception: {str(e)} | "
 
     # 5. FIRST 50 TOP PAGES & VOLATILITY LOGIC (Fixed Target Array Name)
