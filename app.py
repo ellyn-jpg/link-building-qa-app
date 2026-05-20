@@ -224,32 +224,35 @@ st.title("🔗 Link Building QA Assistant")
 st.write("Instantly audit live backlinks against compliance criteria and SEO targets.")
 st.markdown("---")
 
+# --- STREAMLIT USER INTERFACE FORM ---
 with st.form("qa_form"):
     st.subheader("📋 Input Criteria")
     col1, col2 = st.columns(2)
     with col1:
         page_url = st.text_input("Live Page URL", placeholder="https://external-site.com/blog-post")
         target_url = st.text_input("Target URL (Your Site)", placeholder="https://mysite.com/landing-page")
+        brand_name = st.text_input("Customer Brand Name", placeholder="MyBrand")
     with col2:
         anchor_text = st.text_input("Expected Anchor Text", placeholder="click here")
-        brand_name = st.text_input("Customer Brand Name", placeholder="MyBrand")
+        target_niche = st.text_input("Target Niche / Industry", placeholder="e.g., Cybersecurity SaaS")
+        business_topic = st.text_input("Client Core Topic / Product", placeholder="e.g., Password Manager App")
         
     submitted = st.form_submit_button("Run Full QA Audit")
 
+# --- UNIFIED FORM SUBMISSION EXECUTION LAYER ---
 if submitted:
     if not page_url or not target_url:
         st.error("❌ Please provide both the Live Page URL and Target URL to run the check.")
     else:
-        # ==========================================
-        # 1. RUN ENGINE PROCESSING LAYER
-        # ==========================================
-        
+        # Step 1: Execute local rule scraper module
         with st.spinner("Step 1/3: Scraping page HTML & checking guidelines..."):
             qa_results = check_link_and_tags(page_url, target_url, anchor_text, brand_name)
             
+        # Step 2: Execute Ahrefs API module
         with st.spinner("Step 2/3: Ping Ahrefs for Authority metrics..."):
             ahrefs_results = fetch_ahrefs_dr(page_url)
             
+        # Step 3: Extract clean HTML string copy and feed the Gemini engine
         headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
         raw_html_content = ""
         try:
@@ -258,19 +261,19 @@ if submitted:
             pass
 
         with st.spinner("Step 3/3: Running contextual AI Relevancy Audit via Gemini..."):
+            # Variables here match the exact text_input names declared right above
             ai_relevancy = analyze_relevancy_with_gemini(raw_html_content, target_niche, business_topic)
             
         # ==========================================
-        # 2. RENDER USER INTERFACE REPORT
+        # RENDER USER INTERFACE AUDIT REPORT
         # ==========================================
-        
         st.markdown("---")
         st.subheader("📊 Advanced Audit Results Summary")
         
         if qa_results["error"]:
             st.error(f"Scraping Error: {qa_results['error']}")
         else:
-            # High-Level Metrics Row
+            # Main high-level dashboard counters
             m_col1, m_col2, m_col3 = st.columns(3)
             with m_col1:
                 st.metric(label="Domain Rating (DR)", value=f"DR {ahrefs_results['dr']}")
@@ -281,7 +284,7 @@ if submitted:
                 brand_status = "Found" if qa_results["brand_mentioned"] else "Missing"
                 st.metric(label="Brand Mention Check", value=brand_status)
             
-            # --- AI Relevancy Section ---
+            # --- AI Relevancy Visualization Cards ---
             st.markdown("### 🧠 AI Context & Relevancy Engine")
             ai_col1, ai_col2 = st.columns(2)
             with ai_col1:
@@ -300,7 +303,7 @@ if submitted:
                     
             st.info(f"🤖 **AI Audit Insights:** {ai_relevancy['reason']}")
 
-            # --- Technical Risk Section ---
+            # --- Technical Risk Analysis Cards ---
             st.markdown("### 🔍 Risk & Quality Guardrails")
             
             if qa_results["is_redirecting"]:
@@ -318,7 +321,7 @@ if submitted:
             elif qa_results["listicle_top_3_pass"] == "FAIL":
                 st.error(f"❌ **Listicle Placement Failure:** This looks like a listicle, but your brand '{brand_name}' is buried below the top 3 spots.")
 
-            # --- Target Backlink Placement Section ---
+            # --- Target Backlink Placement Verification ---
             st.markdown("### 🔗 Target Link Placement Verification")
             
             if qa_results["link_found"]:
