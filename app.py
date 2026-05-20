@@ -17,7 +17,10 @@ def get_domain_from_url(url):
         return None
 
 def check_link_and_tags(page_url, target_url, expected_anchor, brand_name):
-    """Scrapes the live page to verify links, anchor text, indexability, and brand mentions."""
+    """
+    Advanced scraping suite: Validates live placements, follow metrics, 
+    UGC flags, redirect vulnerabilities, and listicle positioning.
+    """
     results = {
         "link_found": False,
         "anchor_matches": False,
@@ -25,46 +28,94 @@ def check_link_and_tags(page_url, target_url, expected_anchor, brand_name):
         "rel_tags": [],
         "brand_mentioned": False,
         "is_indexable": True,
+        "is_ugc": False,
+        "ugc_reason": "",
+        "is_redirecting": False,
+        "final_destination_url": page_url,
+        "listicle_top_3_pass": "N/A",
         "error": None
     }
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
-        response = requests.get(page_url, headers=headers, timeout=10)
+        
+        # --- 1. DOUBLE CHECK LINK REDIRECTS ---
+        # allow_redirects=True lets us see where the link ultimately lands
+        response = requests.get(page_url, headers=headers, timeout=10, allow_redirects=True)
         
         if response.status_code != 200:
             results["error"] = f"Unable to fetch page (Status Code: {response.status_code})"
             return results
             
+        # Check if the initial URL hopped to a different URL
+        if len(response.history) > 0:
+            results["is_redirecting"] = True
+            results["final_destination_url"] = response.url
+
         soup = BeautifulSoup(response.text, 'html.parser')
         page_text = soup.get_text().lower()
         
-        # 1. Check Brand Mention
+        # --- 2. BRAND MENTION CHECK ---
         if brand_name and brand_name.lower() in page_text:
             results["brand_mentioned"] = True
 
-        # 2. Check Indexability (Meta Robots)
+        # --- 3. CRAWLER INDEXABILITY CHECK ---
         robots_meta = soup.find('meta', attrs={'name': 'robots'})
         if robots_meta and 'noindex' in robots_meta.get('content', '').lower():
             results["is_indexable"] = False
 
-        # 3. Scan Links for Target URL
+        # --- 4. ANTI-UGC FOOTPRINT DETECTION ---
+        # Look for common footprints left behind by forums, user comments, or open blogging sites
+        ugc_signals = {
+            "class_or_id": ['comment-list', 'comment-body', 'comments-area', 'forum-table', 'vbulletin', 'disqus_thread', 'bbpress-forums'],
+            "text_patterns": ['leave a comment', 'post a comment', 'reply to this', 'anonymous user', 'user-generated']
+        }
+        
+        # Check elements for UGC classes/IDs
+        for element in soup.find_all(True, class_=True):
+            if any(signal in ' '.join(element.get('class', [])).lower() for signal in ugc_signals["class_or_id"]):
+                results["is_ugc"] = True
+                results["ugc_reason"] = "UGC system classes/IDs detected in page code."
+                break
+                
+        # Check plain text for UGC phrases if not caught yet
+        if not results["is_ugc"]:
+            if any(phrase in page_text for phrase in ugc_signals["text_patterns"]):
+                results["is_ugc"] = True
+                results["ugc_reason"] = "User-Generated text footprints found in body."
+
+        # --- 5. TARGET BACKLINK AUDIT ---
         links = soup.find_all('a', href=True)
         for link in links:
             if target_url.strip().lower() in link['href'].lower():
                 results["link_found"] = True
                 
-                # Check Anchor Text
+                # Verify Anchor Matches
                 if expected_anchor.strip().lower() in link.text.lower():
                     results["anchor_matches"] = True
                 
-                # Check Rel Attributes (Nofollow/Sponsored)
+                # Check for paid/sponsored/ugc rel labels
                 rel = link.get('rel', [])
                 results["rel_tags"] = rel
                 if any(tag in ['nofollow', 'sponsored', 'ugc'] for tag in rel):
                     results["is_follow"] = False
                 break 
-                
+
+        # --- 6. LISTICLE TOP-3 RANKING CHECK ---
+        # Detect if it's a listicle by checking titles for numbers followed by common buzzwords
+        page_title = soup.title.text.lower() if soup.title else ""
+        listicle_triggers = ['best', 'top', 'tools', 'ways', 'apps', 'platforms', 'services']
+        
+        is_listicle = any(char.isdigit() for char in page_title) and any(word in page_title for word in listicle_triggers)
+        
+        if is_listicle and brand_name:
+            # Gather the first three primary contextual headings (H1, H2, or H3)
+            headings = [h.text.strip().lower() for h in soup.find_all(['h1', 'h2', 'h3'])][:3]
+            
+            # Check if our brand name is highlighted in any of those top 3 headings
+            brand_in_top_3 = any(brand_name.lower() in heading for heading in headings)
+            results["listicle_top_3_pass"] = "PASS" if brand_in_top_3 else "FAIL"
+
         return results
 
     except Exception as e:
