@@ -77,4 +77,4 @@ def fetch_ahrefs_dr(target_url):
     if not domain or not AHREFS_API_KEY:
         return {"dr": "N/A", "error": "Missing domain or Ahrefs API key configuration."}
         
-    endpoint = "
+    endpoint = "https://api.ahrefs.com/v3/site-explorer/domain-rating"
