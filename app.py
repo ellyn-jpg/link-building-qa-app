@@ -78,3 +78,88 @@ def fetch_ahrefs_dr(target_url):
         return {"dr": "N/A", "error": "Missing domain or Ahrefs API key configuration."}
         
     endpoint = "https://api.ahrefs.com/v3/site-explorer/domain-rating"
+    headers = {
+        "Authorization": f"Bearer {AHREFS_API_KEY}",
+        "Accept": "application/json"
+    }
+    params = {
+        "target": domain,
+        "date": "2026-05-21",
+        "output": "json"
+    }
+    
+    try:
+        response = requests.get(endpoint, headers=headers, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            dr_score = data.get("domain_rating", {}).get("domain_rating", 0)
+            return {"dr": dr_score, "error": None}
+        else:
+            return {"dr": "Error", "error": f"Ahrefs API Error ({response.status_code})"}
+    except Exception as e:
+        return {"dr": "Error", "error": str(e)}
+
+
+# --- STREAMLIT USER INTERFACE ---
+st.set_page_config(page_title="Link Building QA", page_icon="🔗", layout="centered")
+
+st.title("🔗 Link Building QA Assistant")
+st.write("Instantly audit live backlinks against compliance criteria and SEO targets.")
+st.markdown("---")
+
+with st.form("qa_form"):
+    st.subheader("📋 Input Criteria")
+    col1, col2 = st.columns(2)
+    with col1:
+        page_url = st.text_input("Live Page URL", placeholder="https://external-site.com/blog-post")
+        target_url = st.text_input("Target URL (Your Site)", placeholder="https://mysite.com/landing-page")
+    with col2:
+        anchor_text = st.text_input("Expected Anchor Text", placeholder="click here")
+        brand_name = st.text_input("Customer Brand Name", placeholder="MyBrand")
+        
+    submitted = st.form_submit_button("Run Full QA Audit")
+
+if submitted:
+    if not page_url or not target_url:
+        st.error("❌ Please provide both the Live Page URL and Target URL to run the check.")
+    else:
+        with st.spinner("Step 1/2: Scraping page HTML & checking guidelines..."):
+            qa_results = check_link_and_tags(page_url, target_url, anchor_text, brand_name)
+            
+        with st.spinner("Step 2/2: Ping Ahrefs for Authority metrics..."):
+            ahrefs_results = fetch_ahrefs_dr(page_url)
+            
+        st.markdown("---")
+        st.subheader("📊 Audit Results Summary")
+        
+        if qa_results["error"]:
+            st.error(f"Scraping Error: {qa_results['error']}")
+        else:
+            m_col1, m_col2, m_col3 = st.columns(3)
+            with m_col1:
+                st.metric(label="Domain Rating (DR)", value=f"DR {ahrefs_results['dr']}")
+            with m_col2:
+                status = "Indexable" if qa_results["is_indexable"] else "NoIndex ❌"
+                st.metric(label="Crawler Index Status", value=status)
+            with m_col3:
+                brand_status = "Found" if qa_results["brand_mentioned"] else "Missing"
+                st.metric(label="Brand Mention Check", value=brand_status)
+            
+            st.markdown("### Detailed Checks")
+            
+            if qa_results["link_found"]:
+                st.success("✅ **Target URL Link Placement:** Link found live on the page.")
+                if qa_results["anchor_matches"]:
+                    st.success(f"✅ **Anchor Text:** Exact or partial match found for: *'{anchor_text}'*")
+                else:
+                    st.warning(f"⚠️ **Anchor Text Mismatch:** Target URL found, but anchor text looks different.")
+                
+                if qa_results["is_follow"]:
+                    st.success("✅ **Link Attribute:** Link is clean and passed juice (No 'nofollow', 'sponsored', or 'ugc' detected).")
+                else:
+                    st.error(f"❌ **Link Attribute Error:** Restrictive parameters found: `{qa_results['rel_tags']}`")
+            else:
+                st.error("❌ **Link Placement Failure:** The target URL could not be find anywhere in the page's HTML structure.")
+                
+            if ahrefs_results["error"]:
+                st.caption(f"Ahrefs Debug Info: {ahrefs_results['error']}")
