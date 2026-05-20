@@ -132,8 +132,8 @@ import datetime
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Queries Ahrefs v3 endpoints using explicit required date mapping 
-    to fetch sitewide metrics successfully.
+    Diagnostic version: Captures and surfaces raw API error messages 
+    from Ahrefs to pinpoint authentication, date, or subscription limits.
     """
     domain = get_domain_from_url(target_url)
     
@@ -142,7 +142,7 @@ def fetch_advanced_ahrefs_data(target_url):
         "traffic_history": None,
         "top_countries": [],
         "keywords": [],
-        "error": None
+        "error": ""
     }
     
     if not domain:
@@ -158,26 +158,21 @@ def fetch_advanced_ahrefs_data(target_url):
     }
     
     today = datetime.date.today()
-    # Ahrefs processing sync lags by 1-2 days, so request yesterday's snapshot safely
     yesterday = today - datetime.timedelta(days=1)
     yesterday_str = yesterday.strftime("%Y-%m-%d")
     six_months_ago = today - datetime.timedelta(days=180)
     
-    # ----------------------------------------------------
-    # ENDPOINT 1: DOMAIN RATING (DR)
-    # ----------------------------------------------------
+    # 1. DOMAIN RATING
     try:
         dr_endpoint = "https://api.ahrefs.com/v3/site-explorer/domain-rating"
         dr_params = {"target": domain, "date": yesterday_str, "output": "json"}
         dr_res = requests.get(dr_endpoint, headers=headers, params=dr_params, timeout=10)
         if dr_res.status_code == 200:
             results["dr"] = dr_res.json().get("domain_rating", {}).get("domain_rating", "N/A")
-    except Exception:
-        pass
+    except Exception as e:
+        results["error"] += f"DR Exception: {str(e)} | "
 
-    # ----------------------------------------------------
-    # ENDPOINT 2: 6-MONTH TRAFFIC HISTORY
-    # ----------------------------------------------------
+    # 2. TRAFFIC HISTORY
     try:
         history_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-history"
         history_params = {
@@ -195,35 +190,33 @@ def fetch_advanced_ahrefs_data(target_url):
     except Exception:
         pass
 
-    # ----------------------------------------------------
-    # ENDPOINT 3: TOP GEOGRAPHIC REGIONS (Fixed with required date)
-    # ----------------------------------------------------
+    # 3. DIAGNOSTIC GEOGRAPHIC REGIONS CHECK
     try:
         geo_endpoint = "https://api.ahrefs.com/v3/site-explorer/metrics-by-country"
         geo_params = {
             "target": domain,
             "mode": "subdomains",
-            "date": yesterday_str, # <--- CRITICAL FIX: Ahrefs v3 requires explicit date here
+            "date": yesterday_str,
             "output": "json"
         }
         geo_res = requests.get(geo_endpoint, headers=headers, params=geo_params, timeout=10)
         if geo_res.status_code == 200:
             countries = geo_res.json().get("metrics", [])
-            # Ahrefs keys it as org_traffic
             sorted_countries = sorted(countries, key=lambda x: x.get('org_traffic', 0), reverse=True)
             results["top_countries"] = sorted_countries[:5]
-    except Exception:
-        pass
+        else:
+            # CAPTURE EXPLICIT ERROR PAYLOAD
+            results["error"] += f"Geo API Error ({geo_res.status_code}): {geo_res.text} | "
+    except Exception as e:
+        results["error"] += f"Geo Exception: {str(e)} | "
 
-    # ----------------------------------------------------
-    # ENDPOINT 4: SAMPLE ORGANIC KEYWORDS (Fixed with required date)
-    # ----------------------------------------------------
+    # 4. DIAGNOSTIC ORGANIC KEYWORDS CHECK
     try:
         kw_endpoint = "https://api.ahrefs.com/v3/site-explorer/organic-keywords"
         kw_params = {
             "target": domain, 
             "mode": "subdomains",
-            "date": yesterday_str, # <--- CRITICAL FIX: Ahrefs v3 requires explicit date here
+            "date": yesterday_str,
             "limit": 20, 
             "select": "keyword,position,volume,traffic", 
             "output": "json"
@@ -231,8 +224,11 @@ def fetch_advanced_ahrefs_data(target_url):
         kw_res = requests.get(kw_endpoint, headers=headers, params=kw_params, timeout=10)
         if kw_res.status_code == 200:
             results["keywords"] = kw_res.json().get("keywords", [])
-    except Exception:
-        pass
+        else:
+            # CAPTURE EXPLICIT ERROR PAYLOAD
+            results["error"] += f"Keywords API Error ({kw_res.status_code}): {kw_res.text} | "
+    except Exception as e:
+        results["error"] += f"Keywords Exception: {str(e)} | "
 
     return results
 
