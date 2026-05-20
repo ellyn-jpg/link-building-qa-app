@@ -438,3 +438,13 @@ if submitted:
                     st.caption(f"Business Theme Profile: *{business_topic}*")
                         
                 st.info(f"🤖 **AI Evaluation Reasoning:** {ai_relevancy['reason']}")
+
+# --- FORCE TROUBLESHOOTING BOX AT THE VERY BOTTOM OF THE FILE ---
+st.markdown("---")
+st.markdown("### 🛠️ System Debug Console")
+if 'ahrefs_results' in locals() and ahrefs_results.get("error"):
+    st.error(f"❌ **Ahrefs Technical Log:** {ahrefs_results['error']}")
+elif 'ahrefs_results' in locals():
+    st.info("ℹ️ **Ahrefs Technical Log:** Connection returned status 200, but lists came back empty. Checking database state...")
+else:
+    st.warning("⚠️ **System Log:** Ahrefs data execution block was not reached.")
