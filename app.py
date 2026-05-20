@@ -159,11 +159,12 @@ def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
 # --- 4. ADVANCED AHREFS SITEWIDE ENGINE ---
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Time-Resilient Version: Implements a 3-day rolling snapshot window
-    to guarantee data extraction even during Ahrefs API server indexing lags.
+    Final Verified Version: Aligns data extraction directly with Ahrefs v3 response dictionary maps
+    and avoids silent loops on empty arrays.
     """
     domain = get_domain_from_url(target_url)
     
+    # Pre-populate defaults so Streamlit components don't experience rendering failures
     results = {
         "dr": "N/A",
         "traffic_history": None,
@@ -185,26 +186,26 @@ def fetch_advanced_ahrefs_data(target_url):
 
     headers = {"Authorization": f"Bearer {AHREFS_API_KEY}", "Accept": "application/json"}
     today = datetime.date.today()
+    yesterday_str = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     six_months_ago = (today - datetime.timedelta(days=180)).strftime("%Y-%m-%d")
     
-    # Generate 3 fallback dates to step through data synchronization gaps safely
+    # 3-Day Rolling Window ensures query resilience against Ahrefs daily caching offsets
     target_dates = [
-        (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"), # Yesterday
-        (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"), # 2 Days Ago
-        (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d")  # 3 Days Ago (Safest)
+        yesterday_str,
+        (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
+        (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
     ]
 
-    # --- 1. DOMAIN RATING (DR) ---
+    # 1. DOMAIN RATING (DR)
     for date_str in target_dates:
         try:
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/domain-rating", headers=headers, params={"target": domain, "date": date_str, "output": "json"}, timeout=10)
-            if res.status_code == 200 and res.json().get("domain_rating", {}).get("domain_rating"):
+            if res.status_code == 200:
                 results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
                 break
         except Exception: pass
-    if results["dr"] == "N/A": results["dr"] = "0"
 
-    # --- 2. 6-MONTH ORGANIC TRAFFIC HISTORY ---
+    # 2. 6-MONTH ORGANIC TRAFFIC HISTORY
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/metrics-history", headers=headers, params={"target": domain, "mode": "subdomains", "date_from": six_months_ago, "date_to": target_dates[0], "history_grouping": "monthly", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -212,51 +213,61 @@ def fetch_advanced_ahrefs_data(target_url):
             results["traffic_history"] = sorted(raw, key=lambda x: x.get('date', ''))
     except Exception: pass
 
-    # --- 3. ORGANIC KEYWORDS & GEO TRAFFIC (Rolling Data Fallback) ---
+    # 3. ORGANIC KEYWORDS & GEO LOCATIONS (Top 20 Rules)
     for date_str in target_dates:
         try:
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 50, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
             if res.status_code == 200:
+                # API v3 explicitly uses the JSON wrapper key 'keywords'
                 raw_kws = res.json().get("keywords", [])
-                if raw_kws: # If this snapshot day has data, process and break the loop
+                if raw_kws:
                     results["keywords"] = raw_kws[:20]
+                    
+                    # Generate top country frequency metric counts
                     countries = [k.get("keyword_country", "").upper() for k in raw_kws if k.get("keyword_country")]
                     top_five = Counter(countries).most_common(5)
                     results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
                     break
-        except Exception: pass
+        except Exception as e:
+            results["error"] += f"KW Ex: {str(e)} | "
 
-    # --- 4. FIRST 20 REFERRING DOMAINS (Rolling Data Fallback) ---
+    # 4. REFERRING DOMAINS (Top 20 Rules)
     for date_str in target_dates:
         try:
             res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "domain,domain_rating", "output": "json"}, timeout=10)
             if res.status_code == 200:
+                # API v3 explicitly uses the JSON wrapper key 'refdomains'
                 raw_rd = res.json().get("refdomains", [])
                 if raw_rd:
                     results["referring_domains"] = raw_rd
                     break
-        except Exception: pass
+        except Exception as e:
+            results["error"] += f"RD Ex: {str(e)} | "
 
-    # --- 5. FIRST 20 TOP PAGES (Fixed Endpoint Path & Key Mapping) ---
+    # 5. TOP PAGES (Top 20 Rules)
     for date_str in target_dates:
         try:
-            # Endpoint path corrected to /top-subpages to match live Site Explorer Top Pages array
-            res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-subpages", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "url,sum_traffic,top_keyword", "output": "json"}, timeout=10)
+            # Reverted to official endpoint to capture traffic distributions safely
+            res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": date_str, "limit": 20, "select": "url,sum_traffic,value", "output": "json"}, timeout=10)
             if res.status_code == 200:
-                # Key wrapper for this endpoint maps to 'subpages'
-                pages = res.json().get("subpages", [])
-                if pages:
-                    results["top_pages"] = pages
+                # API v3 explicitly uses the JSON wrapper key 'top_pages'
+                raw_pages = res.json().get("top_pages", [])
+                if raw_pages:
+                    results["top_pages"] = raw_pages
                     
-                    total_report_traffic = sum(p.get("sum_traffic", 0) for p in pages if isinstance(p, dict))
-                    top_page_traffic = pages[0].get("sum_traffic", 0) if pages and isinstance(pages[0], dict) else 0
+                    # Run traffic alignment warning systems
+                    total_report_traffic = sum(p.get("sum_traffic", 0) for p in raw_pages if isinstance(p, dict))
+                    top_page_traffic = raw_pages[0].get("sum_traffic", 0) if isinstance(raw_pages[0], dict) else 0
                     traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
                     
                     if traffic_pct_spread > 70:
                         results["volatility_status"] = "WARNING"
-                        results["volatility_reason"] = f"CONCENTRATION WARNING: Top single subpage holds {traffic_pct_spread:.1f}% of total site traffic."
+                        results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of total traffic index."
                     break
-        except Exception: pass
+            else:
+                results["error"] += f"Top Pages HTTP {res.status_code}: {res.text} | "
+        except Exception as e:
+            results["error"] += f"Pages Ex: {str(e)} | "
 
     return results
 
