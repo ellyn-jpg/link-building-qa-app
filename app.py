@@ -161,8 +161,9 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Restored Baseline Version: Uses your exact working endpoints and parameter schemas, 
-    cropped perfectly to 25 items, with a single-column filter applied to keywords.
+    Production Version: Restores original working keyword/domain parameters,
+    and replaces keyword geo-guessing with the true /subdomains-by-country endpoint
+    to perfectly match the "Traffic by location" card.
     """
     domain = get_domain_from_url(target_url)
     
@@ -211,18 +212,12 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 3. SAMPLE ORGANIC KEYWORDS & TOP 5 COUNTRIES EXTRACTION (Isolating Single Column & 25 Limit)
+    # 3. SAMPLE ORGANIC KEYWORDS (UNTOUCHED LOGIC - SAVED AS WORKING)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 100, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
         if res.status_code == 200:
             raw_kws = res.json().get("keywords", [])
-            
-            # FIXED: Crops to 25 items and keeps ONLY the single "Keyword" column label mapping
             results["keywords"] = [{"Keyword": k.get("keyword", "")} for k in raw_kws if k.get("keyword")][:25]
-            
-            countries = [k.get("keyword_country", "").upper() for k in raw_kws if k.get("keyword_country")]
-            top_five = Counter(countries).most_common(5)
-            results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
         else:
             results["error"] += f"Keywords Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Keywords Exception: {str(e)} | "
@@ -230,7 +225,40 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 4. FIRST 25 REFERRING DOMAINS (Exactly your working block, changed limit from 50 to 25)
+    # 4. FIX: TRUE TRAFFIC BY LOCATION EXTRACTION (Matches your image layout exactly)
+    try:
+        # Queries the official country endpoints and requests 'org_traffic' to match the Organic UI data
+        res = requests.get(
+            "https://api.ahrefs.com/v3/site-explorer/subdomains-by-country", 
+            headers=headers, 
+            params={
+                "target": domain, 
+                "date": yesterday_str, 
+                "limit": 5, # Grabs exactly the Top 5 countries shown in your screenshot
+                "select": "country,org_traffic", 
+                "order_by": "org_traffic:desc", # Sorts highest organic volume first
+                "output": "json"
+            }, 
+            timeout=10
+        )
+        if res.status_code == 200:
+            raw_countries = res.json().get("countries", [])
+            # Map country codes to presentation labels cleanly
+            results["top_countries"] = [
+                {
+                    "Country": item.get("country", "").upper(), 
+                    "Organic Traffic": item.get("org_traffic", 0)
+                } 
+                for item in raw_countries
+            ]
+        else:
+            results["error"] += f"Geo Location Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"Geo Location Ex: {str(e)} | "
+
+    # MANDATORY RATE LIMIT SHIELD
+    time.sleep(2.0)
+
+    # 5. FIRST 25 REFERRING DOMAINS (UNTOUCHED LOGIC - SAVED AS WORKING)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -242,14 +270,13 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 5. FIRST 25 TOP PAGES (Exactly your working block, changed limit from 50 to 25)
+    # 6. FIRST 25 TOP PAGES (UNTOUCHED LOGIC - SAVED AS WORKING)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "url,traffic,status_code", "output": "json"}, timeout=10)
         if res.status_code == 200:
             pages = res.json().get("top_pages", [])
             results["top_pages"] = pages
             
-            # Safe parsing math calculation checks
             lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("status_code", 200) >= 400)
             total_report_traffic = sum(p.get("traffic", 0) for p in pages if isinstance(p, dict))
             
