@@ -161,8 +161,8 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Direct-Mapping Production Version: Removes traffic summation logic 
-    and passes raw Ahrefs API response items directly into your UI sheets.
+    Final Calibrated Version: Cleans keyword structures into a strict single-column 
+    dictionary list natively, ensuring Streamlit always displays the first 25 results.
     """
     domain = get_domain_from_url(target_url)
     
@@ -198,10 +198,10 @@ def fetch_advanced_ahrefs_data(target_url):
             results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
     except Exception: pass
 
-    # MANDATORY SHIELD PAUSE (Prevents Cloudflare rate blocks)
+    # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 2: 6-MONTH ORGANIC TRAFFIC HISTORY TREND ---
+    # --- ENDPOINT 2: TRAFFIC HISTORY TREND ---
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/metrics-history", headers=headers, params={"target": domain, "mode": "subdomains", "date_from": six_months_ago, "date_to": yesterday_str, "history_grouping": "monthly", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -212,7 +212,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS & TARGET PAGES (As-Is From Ahrefs Report) ---
+    # --- ENDPOINT 3: ORGANIC KEYWORDS & TOP PAGES (Strictly 25 Line Items) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
@@ -220,8 +220,8 @@ def fetch_advanced_ahrefs_data(target_url):
             params={
                 "target": domain, 
                 "mode": "subdomains", 
-                "limit": 25, # Strict 25-item ceiling on the first data page
-                "select": "keyword,best_position,volume,sum_traffic,keyword_country,url", # Added explicit url request
+                "limit": 25, 
+                "select": "keyword,sum_traffic,keyword_country,url", 
                 "order_by": "traffic:desc", 
                 "output": "json"
             }, 
@@ -230,10 +230,10 @@ def fetch_advanced_ahrefs_data(target_url):
         if res.status_code == 200:
             raw_keywords = res.json().get("keywords", [])
             
-            # 1. Map Keywords Table directly as-is
-            results["keywords"] = raw_keywords
+            # 1. FIXED: Extract JUST the "Keyword" column natively as an isolated dictionary list
+            results["keywords"] = [{"Keyword": kw.get("keyword", "")} for kw in raw_keywords if kw.get("keyword")]
             
-            # 2. Map Top Pages Table directly as-is (pulling explicit URLs and traffic shares)
+            # 2. Map Top Pages Table with standard URL path keys
             results["top_pages"] = [
                 {
                     "URL Path": kw.get("url", ""), 
@@ -242,7 +242,7 @@ def fetch_advanced_ahrefs_data(target_url):
                 for kw in raw_keywords
             ]
             
-            # 3. Map top country distributions directly from active rows
+            # 3. Map country distributions safely
             countries = [k.get("keyword_country", "").upper() for k in raw_keywords if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
@@ -251,7 +251,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (As-Is From Ahrefs Report) ---
+    # --- ENDPOINT 4: REFERRING DOMAINS (Strictly 25 Line Items) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/refdomains", 
@@ -259,7 +259,7 @@ def fetch_advanced_ahrefs_data(target_url):
             params={
                 "target": domain, 
                 "mode": "subdomains", 
-                "limit": 25, # Strict 25-item ceiling on the first data page
+                "limit": 25, 
                 "select": "domain,domain_rating", 
                 "order_by": "domain_rating:desc", 
                 "output": "json"
@@ -404,23 +404,13 @@ if submitted:
                 with d_col1:
                     st.markdown("#### 🔤 Sample Organic Keywords (First 25 Line Items)")
                     if ahrefs_results["keywords"]:
-                        import pandas as pd
-                        # Convert the raw data to a clean DataFrame
-                        df_keywords = pd.DataFrame(ahrefs_results["keywords"])
-                        
-                        # STAGE GUARD: Ensure the 'keyword' column exists, then isolate it cleanly
-                        if "keyword" in df_keywords.columns:
-                            # Filter down to the single requested column and rename it for presentation
-                            df_display = df_keywords[["keyword"]].copy()
-                            df_display.columns = ["Keyword"]
-                            
-                            # Display only the first 25 items on your dashboard screen
-                            st.dataframe(df_display.head(25), use_container_width=True)
-                        else:
-                            st.caption("The keyword key structure was missing from the backend response data.")
+                        # Displays the clean single-column "Keyword" table natively
+                        st.dataframe(ahrefs_results["keywords"], use_container_width=True)
                     else: 
                         st.caption("No organic keyword arrays found.")
-                    st.markdown("#### 🔗 Referring Domains Profile (First 25 Line Items) Should be not suspicious domains")
+                        
+                with d_col2:
+                    st.markdown("#### 🔗 Referring Domains Profile (First 25 Line Items)")
                     if ahrefs_results["referring_domains"]:
                         st.dataframe(ahrefs_results["referring_domains"], use_container_width=True)
                     else: st.caption("No external referring domains found.")
