@@ -6,6 +6,7 @@ import json
 import datetime
 from collections import Counter
 from google import genai
+import time
 
 # --- 1. SECURE API CONFIGURATION KEYS ---
 AHREFS_API_KEY = st.secrets.get("AHREFS_API_KEY", "")
@@ -15,7 +16,7 @@ GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 
-# --- 2. CORE BACKEND HELPERS & SCRAEPERS ---
+# --- 2. CORE BACKEND HELPERS & SCRAPERS ---
 def get_domain_from_url(url):
     """Extracts the root domain (e.g., 'example.com') from any URL string."""
     try:
@@ -157,8 +158,6 @@ def analyze_relevancy_with_gemini(page_html, target_niche, business_topic):
 
 
 # --- 4. ADVANCED AHREFS SITEWIDE ENGINE ---
-import time # Double-check that 'import time' is at the very top of your file!
-
 def fetch_advanced_ahrefs_data(target_url):
     """
     Production Engine: Adds required date parameters to country and top-pages 
@@ -211,7 +210,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 3. SAMPLE ORGANIC KEYWORDS (UNTOUCHED - VERIFIED WORKING LOGIC)
+    # 3. SAMPLE ORGANIC KEYWORDS (SAVED WORKING BASELINE VERSION)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 100, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -224,7 +223,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 4. TRAFFIC BY LOCATION (FIXED: Added mandatory date field to clear 400 status)
+    # 4. TRAFFIC BY LOCATION (FIXED: Added date parameters to clear 400 status errors)
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/metrics-by-country", 
@@ -232,7 +231,7 @@ def fetch_advanced_ahrefs_data(target_url):
             params={
                 "target": domain, 
                 "mode": "subdomains",
-                "date": yesterday_str, # FIXED: Added mandatory date parameter
+                "date": yesterday_str,
                 "select": "country,org_traffic", 
                 "output": "json"
             }, 
@@ -240,7 +239,6 @@ def fetch_advanced_ahrefs_data(target_url):
         )
         if res.status_code == 200:
             raw_countries = res.json().get("metrics", [])
-            # Sort manually by organic volume descending
             sorted_countries = sorted(raw_countries, key=lambda x: x.get("org_traffic", 0), reverse=True)
             
             results["top_countries"] = [
@@ -257,7 +255,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 5. FIRST 25 REFERRING DOMAINS (UNTOUCHED - VERIFIED WORKING LOGIC)
+    # 5. FIRST 25 REFERRING DOMAINS (SAVED WORKING BASELINE VERSION)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -269,7 +267,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 6. FIRST 25 TOP PAGES (FIXED: Added missing parameters & fixed sorting key format to clear 400 status)
+    # 6. FIRST 25 TOP PAGES (FIXED: Added date & updated to standard sorting column keys)
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/top-pages", 
@@ -277,10 +275,10 @@ def fetch_advanced_ahrefs_data(target_url):
             params={
                 "target": domain, 
                 "mode": "subdomains", 
-                "date": yesterday_str, # FIXED: Provided mandatory snapshot date structure
+                "date": yesterday_str,
                 "limit": 25, 
                 "select": "url,traffic,status_code", 
-                "order_by": "traffic:desc", # FIXED: Standardized to official v3 column key sorting identity
+                "order_by": "traffic:desc",
                 "output": "json"
             }, 
             timeout=10
@@ -427,16 +425,19 @@ if submitted:
                 c_left, c_right = st.columns(2)
                 with c_left:
                     st.markdown("#### 🌍 Top 5 Geo-Traffic Locations")
+                    # FIXED: Corrected indentation rules for nested execution layers
                     if ahrefs_results["top_countries"]:
-                        # Look for your country loop around line 431
-for item in ahrefs_results["top_countries"]:
-    # This line MUST be indented cleanly by 4 spaces underneath the 'for' statement above
-    st.write(f"🏳️‍🌈 **{item['Country']}**: Common in Top Ranking Clusters")
-                    else: st.caption("No geographical country distributions populated.")
+                        for item in ahrefs_results["top_countries"]:
+                            st.write(f"🏳️‍🌈 **{item['Country']}**: Common in Top Ranking Clusters")
+                            if "Organic Traffic" in item:
+                                st.caption(f"Estimated Traffic Share: {item['Organic Traffic']:,}")
+                    else: 
+                        st.caption("No geographical country distributions populated.")
+                        
                 with c_right:
                     st.markdown("#### 🛠️ Core Metric Summary Indicators")
-                    st.write(f"📊 **First 50 Referring Domains Processed:** {len(ahrefs_results['referring_domains'])} profiles loaded.")
-                    st.write(f"📄 **First 50 Core Traffic Pages Indexed:** {len(ahrefs_results['top_pages'])} profiles loaded.")
+                    st.write(f"📊 **Referring Domains Window Cap:** {len(ahrefs_results['referring_domains'])} results mapped.")
+                    st.write(f"📄 **Core Top Pages Window Cap:** {len(ahrefs_results['top_pages'])} results mapped.")
                     
                 st.markdown("---")
                 
@@ -445,7 +446,6 @@ for item in ahrefs_results["top_countries"]:
                 with d_col1:
                     st.markdown("#### 🔤 Sample Organic Keywords (First 25 Line Items)")
                     if ahrefs_results["keywords"]:
-                        # Displays the clean single-column "Keyword" table natively
                         st.dataframe(ahrefs_results["keywords"], use_container_width=True)
                     else: 
                         st.caption("No organic keyword arrays found.")
@@ -454,12 +454,14 @@ for item in ahrefs_results["top_countries"]:
                     st.markdown("#### 🔗 Referring Domains Profile (First 25 Line Items)")
                     if ahrefs_results["referring_domains"]:
                         st.dataframe(ahrefs_results["referring_domains"], use_container_width=True)
-                    else: st.caption("No external referring domains found.")
+                    else: 
+                        st.caption("No external referring domains found.")
                     
                 st.markdown("#### 📄 Top Traffic Target Pages Distribution (First 25 Line Items)")
                 if ahrefs_results["top_pages"]:
                     st.dataframe(ahrefs_results["top_pages"], use_container_width=True)
-                else: st.caption("No matching structural target subpages found.")
+                else: 
+                    st.caption("No matching structural target subpages found.")
 
             # --- TAB 3: ARTIFICIAL SEMANTIC INTELLIGENCE ---
             with tab3:
