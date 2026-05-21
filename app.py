@@ -161,8 +161,9 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Calibrated Production Version: Matches your exact Ahrefs layout parameters.
-    Queries the master domain footprint and pulls exactly the first 25 line items.
+    Final Production Version: Fully synchronized sorting variables.
+    Forces Organic Keywords to sort by highest traffic share first and 
+    Referring Domains to sort by highest DR first, locking both at 25 items.
     """
     domain = get_domain_from_url(target_url)
     
@@ -198,7 +199,7 @@ def fetch_advanced_ahrefs_data(target_url):
             results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
     except Exception: pass
 
-    # MANDATORY SHIELD PAUSE (Prevents Cloudflare blocks)
+    # MANDATORY SHIELD PAUSE (Prevents Cloudflare rate blocks)
     time.sleep(2.0)
 
     # --- ENDPOINT 2: 6-MONTH ORGANIC TRAFFIC HISTORY TREND ---
@@ -212,19 +213,32 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS (First 25 Results) ---
+    # --- ENDPOINT 3: ORGANIC KEYWORDS (Sorted by Highest Organic Traffic Share First) ---
     try:
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "limit": 100, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
+        # 'order_by': 'sum_traffic:desc' mirrors sort=OrganicTrafficInitial & sortDirection=desc from your link
+        res = requests.get(
+            "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
+            headers=headers, 
+            params={
+                "target": domain, 
+                "mode": "subdomains", 
+                "limit": 25, # Limits backend processing strictly to the first 25 rows
+                "select": "keyword,best_position,volume,sum_traffic,keyword_country", 
+                "order_by": "sum_traffic:desc", 
+                "output": "json"
+            }, 
+            timeout=10
+        )
         if res.status_code == 200:
             raw_keywords = res.json().get("keywords", [])
-            results["keywords"] = raw_keywords[:25] # Limits table strictly to 25 items
+            results["keywords"] = raw_keywords
             
-            # Map top country distributions
+            # Map top country distributions directly from sorted data
             countries = [k.get("keyword_country", "").upper() for k in raw_keywords if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
             
-            # Map Top Pages distribution dataset
+            # Map Top Pages distribution dataset seamlessly
             unique_pages = {}
             for kw in raw_keywords:
                 url_stub = f"https://{domain}/"
@@ -236,34 +250,30 @@ def fetch_advanced_ahrefs_data(target_url):
                     }
                 else:
                     unique_pages[url_stub]["sum_traffic"] += kw.get("sum_traffic", 0)
-            results["top_pages"] = list(unique_pages.values())[:25] # Limits page list strictly to 25 items
+            results["top_pages"] = list(unique_pages.values())[:25]
     except Exception: pass
 
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (First 25 Results matching highest DR) ---
+    # --- ENDPOINT 4: REFERRING DOMAINS (Sorted by Highest DR First) ---
     try:
-        # Replicated parameter map to match your interface sorting precisely
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/refdomains", 
             headers=headers, 
             params={
                 "target": domain, 
                 "mode": "subdomains", 
-                "limit": 25, # Pulls exactly the first 25 line items from your view
+                "limit": 25, 
                 "select": "domain,domain_rating", 
-                "order_by": "domain_rating:desc", # Matches sort=Dr & sortDirection=desc from your link
+                "order_by": "domain_rating:desc", 
                 "output": "json"
             }, 
             timeout=10
         )
         if res.status_code == 200:
             results["referring_domains"] = res.json().get("refdomains", [])
-        elif res.status_code == 429:
-            results["error"] += "RD limited (429) | "
-    except Exception as e:
-        results["error"] += f"RD Err: {str(e)} | "
+    except Exception: pass
 
     return results
 
@@ -402,7 +412,7 @@ if submitted:
                         st.dataframe(ahrefs_results["keywords"], use_container_width=True)
                     else: st.caption("No organic keyword arrays found.")
                 with d_col2:
-                    st.markdown("#### 🔗 Referring Domains Profile (First 25 Line Items)")
+                    st.markdown("#### 🔗 Referring Domains Profile (First 25 Line Items) Should be not suspicious domains")
                     if ahrefs_results["referring_domains"]:
                         st.dataframe(ahrefs_results["referring_domains"], use_container_width=True)
                     else: st.caption("No external referring domains found.")
