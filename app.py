@@ -255,9 +255,22 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 5. FIRST 25 REFERRING DOMAINS (SAVED WORKING BASELINE VERSION)
+    # 5. FIRST 25 REFERRING DOMAINS (FIXED: Added explicit domain_rating:desc sort parameter)
     try:
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "domain,domain_rating", "output": "json"}, timeout=10)
+        res = requests.get(
+            "https://api.ahrefs.com/v3/site-explorer/refdomains", 
+            headers=headers, 
+            params={
+                "target": domain, 
+                "mode": "subdomains", 
+                "date": yesterday_str, 
+                "limit": 25, 
+                "select": "domain,domain_rating", 
+                "order_by": "domain_rating:desc", # FIXED: Forces top highest DR domains from Page 1
+                "output": "json"
+            }, 
+            timeout=10
+        )
         if res.status_code == 200:
             results["referring_domains"] = res.json().get("refdomains", [])
         else:
@@ -425,7 +438,6 @@ if submitted:
                 c_left, c_right = st.columns(2)
                 with c_left:
                     st.markdown("#### 🌍 Top 5 Geo-Traffic Locations")
-                    # FIXED: Corrected indentation rules for nested execution layers
                     if ahrefs_results["top_countries"]:
                         for item in ahrefs_results["top_countries"]:
                             st.write(f"🏳️‍🌈 **{item['Country']}**: Common in Top Ranking Clusters")
