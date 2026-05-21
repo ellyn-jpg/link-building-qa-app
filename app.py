@@ -161,9 +161,8 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Final Production Version: Fully synchronized sorting variables.
-    Forces Organic Keywords to sort by highest traffic share first and 
-    Referring Domains to sort by highest DR first, locking both at 25 items.
+    Direct-Mapping Production Version: Removes traffic summation logic 
+    and passes raw Ahrefs API response items directly into your UI sheets.
     """
     domain = get_domain_from_url(target_url)
     
@@ -213,50 +212,46 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS (Sorted by Highest Organic Traffic Share First) ---
+    # --- ENDPOINT 3: ORGANIC KEYWORDS & TARGET PAGES (As-Is From Ahrefs Report) ---
     try:
-        # 'order_by': 'sum_traffic:desc' mirrors sort=OrganicTrafficInitial & sortDirection=desc from your link
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
             headers=headers, 
             params={
                 "target": domain, 
                 "mode": "subdomains", 
-                "limit": 25, # Limits backend processing strictly to the first 25 rows
-                "select": "keyword,best_position,volume,sum_traffic,keyword_country", 
-                "order_by": "sum_traffic:desc", 
+                "limit": 25, # Strict 25-item ceiling on the first data page
+                "select": "keyword,best_position,volume,sum_traffic,keyword_country,url", # Added explicit url request
+                "order_by": "traffic:desc", 
                 "output": "json"
             }, 
             timeout=10
         )
         if res.status_code == 200:
             raw_keywords = res.json().get("keywords", [])
+            
+            # 1. Map Keywords Table directly as-is
             results["keywords"] = raw_keywords
             
-            # Map top country distributions directly from sorted data
+            # 2. Map Top Pages Table directly as-is (pulling explicit URLs and traffic shares)
+            results["top_pages"] = [
+                {
+                    "URL Path": kw.get("url", ""), 
+                    "Traffic Value": kw.get("sum_traffic", 0)
+                } 
+                for kw in raw_keywords
+            ]
+            
+            # 3. Map top country distributions directly from active rows
             countries = [k.get("keyword_country", "").upper() for k in raw_keywords if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
-            
-            # Map Top Pages distribution dataset seamlessly
-            unique_pages = {}
-            for kw in raw_keywords:
-                url_stub = f"https://{domain}/"
-                if url_stub not in unique_pages:
-                    unique_pages[url_stub] = {
-                        "url": url_stub,
-                        "sum_traffic": kw.get("sum_traffic", 0),
-                        "status": "Live"
-                    }
-                else:
-                    unique_pages[url_stub]["sum_traffic"] += kw.get("sum_traffic", 0)
-            results["top_pages"] = list(unique_pages.values())[:25]
     except Exception: pass
 
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (Sorted by Highest DR First) ---
+    # --- ENDPOINT 4: REFERRING DOMAINS (As-Is From Ahrefs Report) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/refdomains", 
@@ -264,7 +259,7 @@ def fetch_advanced_ahrefs_data(target_url):
             params={
                 "target": domain, 
                 "mode": "subdomains", 
-                "limit": 25, 
+                "limit": 25, # Strict 25-item ceiling on the first data page
                 "select": "domain,domain_rating", 
                 "order_by": "domain_rating:desc", 
                 "output": "json"
@@ -409,9 +404,22 @@ if submitted:
                 with d_col1:
                     st.markdown("#### 🔤 Sample Organic Keywords (First 25 Line Items)")
                     if ahrefs_results["keywords"]:
-                        st.dataframe(ahrefs_results["keywords"], use_container_width=True)
-                    else: st.caption("No organic keyword arrays found.")
-                with d_col2:
+                        import pandas as pd
+                        # Convert the raw data to a clean DataFrame
+                        df_keywords = pd.DataFrame(ahrefs_results["keywords"])
+                        
+                        # STAGE GUARD: Ensure the 'keyword' column exists, then isolate it cleanly
+                        if "keyword" in df_keywords.columns:
+                            # Filter down to the single requested column and rename it for presentation
+                            df_display = df_keywords[["keyword"]].copy()
+                            df_display.columns = ["Keyword"]
+                            
+                            # Display only the first 25 items on your dashboard screen
+                            st.dataframe(df_display.head(25), use_container_width=True)
+                        else:
+                            st.caption("The keyword key structure was missing from the backend response data.")
+                    else: 
+                        st.caption("No organic keyword arrays found.")
                     st.markdown("#### 🔗 Referring Domains Profile (First 25 Line Items) Should be not suspicious domains")
                     if ahrefs_results["referring_domains"]:
                         st.dataframe(ahrefs_results["referring_domains"], use_container_width=True)
