@@ -161,8 +161,8 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Final Verified Version: Keeps Referring Domains untouched, while applying
-    case-insensitive fallback validation to guarantee the keywords load successfully.
+    Restored Production Version: Preserves your working Referring Domains module,
+    while applying the mandatory global country parameter to unlock organic keywords.
     """
     domain = get_domain_from_url(target_url)
     
@@ -212,7 +212,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS (With Case-Insensitive Fallback Extraction) ---
+    # --- ENDPOINT 3: ORGANIC KEYWORDS (Restored Working Code + Global Parameter) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
@@ -221,8 +221,9 @@ def fetch_advanced_ahrefs_data(target_url):
                 "target": domain, 
                 "mode": "subdomains", 
                 "date": yesterday_str,
+                "country": "global", # FIXED: Forces Ahrefs to look at allGlobal instead of returning []
                 "limit": 25, 
-                "select": "keyword,best_position,volume,sum_traffic,keyword_country,url", 
+                "select": "keyword,sum_traffic,keyword_country,url", 
                 "order_by": "traffic:desc", 
                 "output": "json"
             }, 
@@ -230,24 +231,20 @@ def fetch_advanced_ahrefs_data(target_url):
         )
         if res.status_code == 200:
             raw_keywords = res.json().get("keywords", [])
-            processed_keywords = []
-            processed_pages = []
             
-            for kw in raw_keywords:
-                # Case-Insensitive Check: Tries 'keyword' then falls back to 'Keyword'
-                k_val = kw.get("keyword", kw.get("Keyword", ""))
-                u_val = kw.get("url", kw.get("URL", ""))
-                t_val = kw.get("sum_traffic", kw.get("traffic", 0))
-                
-                if k_val:
-                    processed_keywords.append({"Keyword": k_val})
-                if u_val:
-                    processed_pages.append({"URL Path": u_val, "Traffic Value": t_val})
+            # Extract just the single "Keyword" column natively as requested
+            results["keywords"] = [{"Keyword": kw.get("keyword", "")} for kw in raw_keywords if kw.get("keyword")]
             
-            results["keywords"] = processed_keywords
-            results["top_pages"] = processed_pages[:25]
+            # Map Top Pages Table directly as-is using raw individual ranking URLs
+            results["top_pages"] = [
+                {
+                    "URL Path": kw.get("url", ""), 
+                    "Traffic Value": kw.get("sum_traffic", 0)
+                } 
+                for kw in raw_keywords
+            ]
             
-            # Map top country metrics safely
+            # Map top country metrics
             countries = [k.get("keyword_country", "").upper() for k in raw_keywords if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
@@ -256,7 +253,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (UNTOUCHED & FULLY WORKING) ---
+    # --- ENDPOINT 4: REFERRING DOMAINS (UNTOUCHED & UNCHANGED) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/refdomains", 
@@ -275,7 +272,7 @@ def fetch_advanced_ahrefs_data(target_url):
             results["referring_domains"] = res.json().get("refdomains", [])
     except Exception: pass
 
-    return results
+    return results	
 
 # --- 5. STREAMLIT FRONT-END DASHBOARD UI ---
 st.set_page_config(page_title="Enterprise Link Building QA", page_icon="🔗", layout="wide")
