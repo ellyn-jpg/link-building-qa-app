@@ -161,12 +161,11 @@ import time # Ensure this is imported at the top of your file to support time de
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Core API v3 Data Loader: Pulls live Domain Rating from Ahrefs,
-    and structures clean, readable datasets for your report tables.
+    Live Production Version: Fetches real-time Domain Rating, Keywords, 
+    RefDomains, and Top Pages metrics from Ahrefs v3 with rate-limit guards.
     """
     domain = get_domain_from_url(target_url)
     
-    # Initialize dictionary structures with zero/empty fallbacks instead of placeholder text
     results = {
         "dr": "N/A",
         "traffic_history": None,
@@ -187,57 +186,69 @@ def fetch_advanced_ahrefs_data(target_url):
         return results
 
     headers = {"Authorization": f"Bearer {AHREFS_API_KEY}", "Accept": "application/json"}
+    
+    # Use a single static date target to eliminate 429 connection pool loops
     today = datetime.date.today()
-    
-    # Generate 3 fallback dates to step through data synchronization gaps safely
-    target_dates = [
-        (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
-        (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
-        (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
-    ]
+    yesterday_str = (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+    six_months_ago = (today - datetime.timedelta(days=180)).strftime("%Y-%m-%d")
 
-    # 1. FETCH LIVE DOMAIN RATING (DR)
-    dr_fetched = False
-    for date_str in target_dates:
-        try:
-            res = requests.get(
-                "https://api.ahrefs.com/v3/site-explorer/domain-rating", 
-                headers=headers, 
-                params={"target": domain, "date": date_str, "output": "json"}, 
-                timeout=10
-            )
-            if res.status_code == 200:
-                results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
-                dr_fetched = True
-                break
-        except Exception: pass
+    # 1. LIVE DOMAIN RATING (DR)
+    try:
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/domain-rating", headers=headers, params={"target": domain, "date": yesterday_str, "output": "json"}, timeout=10)
+        if res.status_code == 200:
+            results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
+    except Exception: pass
 
-    if not dr_fetched:
-        results["dr"] = "N/A"
+    # 2. 6-MONTH ORGANIC TRAFFIC HISTORY
+    try:
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/metrics-history", headers=headers, params={"target": domain, "mode": "subdomains", "date_from": six_months_ago, "date_to": yesterday_str, "history_grouping": "monthly", "output": "json"}, timeout=10)
+        if res.status_code == 200:
+            raw = res.json().get("metrics", [])
+            results["traffic_history"] = sorted(raw, key=lambda x: x.get('date', ''))
+    except Exception: pass
 
-    # 2. FORMAT REPORT DATASETS
-    # This formats empty structured lists so your tables display clean, empty rows instead of text strings
-    results["keywords"] = [
-        {"Keyword": "No records fetched", "Position": "-", "Volume": 0}
-    ]
-    results["referring_domains"] = [
-        {"Domain": "No records fetched", "Domain Rating": "-"}
-    ]
-    results["top_pages"] = [
-        {"URL Path": "No records fetched", "Traffic Share": "0%"}
-    ]
-    results["top_countries"] = [
-        {"country": "GLOBAL DATA", "count": 0}
-    ]
-    
-    # Empty chart timeline initialization
-    results["traffic_history"] = [
-        {"date": "2026-01", "org_traffic": 0},
-        {"date": "2026-02", "org_traffic": 0},
-        {"date": "2026-03", "org_traffic": 0},
-        {"date": "2026-04", "org_traffic": 0},
-        {"date": "2026-05", "org_traffic": 0}
-    ]
+    # 3. LIVE ORGANIC KEYWORDS & GEO TRAFFIC (Limited to 20 Rows)
+    try:
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
+        if res.status_code == 200:
+            raw_kws = res.json().get("keywords", [])
+            results["keywords"] = raw_kws
+            
+            # Map Top 5 Traffic Locations
+            countries = [k.get("keyword_country", "").upper() for k in raw_kws if k.get("keyword_country")]
+            top_five = Counter(countries).most_common(5)
+            results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
+        else:
+            results["error"] += f"Keywords Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"Keywords Ex: {str(e)} | "
+
+    # 4. LIVE REFERRING DOMAINS (Limited to 20 Rows)
+    try:
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "domain,domain_rating", "output": "json"}, timeout=10)
+        if res.status_code == 200:
+            results["referring_domains"] = res.json().get("refdomains", [])
+        else:
+            results["error"] += f"RD Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"RD Ex: {str(e)} | "
+
+    # 5. LIVE TOP PAGES (Limited to 20 Rows)
+    try:
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 20, "select": "url,sum_traffic,value", "output": "json"}, timeout=10)
+        if res.status_code == 200:
+            raw_pages = res.json().get("top_pages", [])
+            results["top_pages"] = raw_pages
+            
+            # Run Concentration Compliance Check
+            total_report_traffic = sum(p.get("sum_traffic", 0) for p in raw_pages if isinstance(p, dict))
+            top_page_traffic = raw_pages[0].get("sum_traffic", 0) if raw_pages and isinstance(raw_pages[0], dict) else 0
+            traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
+            
+            if traffic_pct_spread > 70:
+                results["volatility_status"] = "WARNING"
+                results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of total traffic spread."
+        else:
+            results["error"] += f"Top Pages Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"Top Pages Ex: {str(e)} | "
 
     return results
 
