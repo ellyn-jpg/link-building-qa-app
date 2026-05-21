@@ -161,10 +161,9 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Root Domain Target Version: Automatically extracts the clean root domain
-    from any input URL and pulls exactly 25 items sorted correctly from Ahrefs.
+    Root Domain Target Version: Automatically extracts the clean root domain,
+    safely honors mandatory API v3 date parameters, and pulls exactly 25 items.
     """
-    # Natively extract just the root domain (e.g., 'europeanbusinessmagazine.com')
     domain = get_domain_from_url(target_url)
     
     results = {
@@ -213,18 +212,18 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS (Sorted by Highest Traffic Share First) ---
+    # --- ENDPOINT 3: ORGANIC KEYWORDS (UNTOUCHED LOGIC + MANDATORY DATE PARAM) ---
     try:
-        # Targeting the extracted 'domain' and using 'mode': 'subdomains'
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
             headers=headers, 
             params={
                 "target": domain, 
-                "mode": "subdomains", # Pulls the global domain asset footprint
-                "limit": 25, # Limits response strictly to your first 25 lines
+                "mode": "subdomains", 
+                "date": yesterday_str, # ADDED: Mandatory API v3 Parameter to unlock data stream
+                "limit": 25, 
                 "select": "keyword,traffic,url,keyword_country", 
-                "order_by": "traffic:desc", # Native backend mapping for traffic descending
+                "order_by": "traffic:desc", 
                 "output": "json"
             }, 
             timeout=10
@@ -232,10 +231,10 @@ def fetch_advanced_ahrefs_data(target_url):
         if res.status_code == 200:
             raw_keywords = res.json().get("keywords", [])
             
-            # Extract just the single "Keyword" column natively as requested
+            # Extract just the single "Keyword" column natively
             results["keywords"] = [{"Keyword": kw.get("keyword", "")} for kw in raw_keywords if kw.get("keyword")]
             
-            # Map Top Pages Table directly as-is with raw ranking individual URLs from the report
+            # Map Top Pages Table directly as-is using raw individual ranking URLs
             results["top_pages"] = [
                 {
                     "URL Path": kw.get("url", ""), 
@@ -253,14 +252,14 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (Sorted by Highest DR First) ---
+    # --- ENDPOINT 4: REFERRING DOMAINS (UNTOUCHED & EXPLICITLY UNCHANGED) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/refdomains", 
             headers=headers, 
             params={
                 "target": domain, 
-                "mode": "subdomains", # Pulls the global domain asset footprint
+                "mode": "subdomains", 
                 "limit": 25, 
                 "select": "domain,domain_rating", 
                 "order_by": "domain_rating:desc", 
