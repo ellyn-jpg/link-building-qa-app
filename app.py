@@ -161,8 +161,8 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Fixed Production Version: Corrects the geo endpoint to metrics-by-country
-    and aligns top-pages variables, leaving working keyword and domain logic intact.
+    Production Engine: Adds required date parameters to country and top-pages 
+    endpoints to clear 400 Bad Requests, leaving working keyword/domain code untouched.
     """
     domain = get_domain_from_url(target_url)
     
@@ -224,7 +224,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 4. TRAFFIC BY LOCATION (Official v3 API path: metrics-by-country)
+    # 4. TRAFFIC BY LOCATION (FIXED: Added mandatory date field to clear 400 status)
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/metrics-by-country", 
@@ -232,6 +232,7 @@ def fetch_advanced_ahrefs_data(target_url):
             params={
                 "target": domain, 
                 "mode": "subdomains",
+                "date": yesterday_str, # FIXED: Added mandatory date parameter
                 "select": "country,org_traffic", 
                 "output": "json"
             }, 
@@ -239,7 +240,7 @@ def fetch_advanced_ahrefs_data(target_url):
         )
         if res.status_code == 200:
             raw_countries = res.json().get("metrics", [])
-            # Sort natively to extract the highest volumes first and slice down to 5 items
+            # Sort manually by organic volume descending
             sorted_countries = sorted(raw_countries, key=lambda x: x.get("org_traffic", 0), reverse=True)
             
             results["top_countries"] = [
@@ -248,7 +249,7 @@ def fetch_advanced_ahrefs_data(target_url):
                     "Organic Traffic": item.get("org_traffic", 0)
                 } 
                 for item in sorted_countries
-            ][:5] # Strict top 5 restriction
+            ][:5] # Hardcoded top 5 slice restriction
         else:
             results["error"] += f"Geo Location Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Geo Location Ex: {str(e)} | "
@@ -268,16 +269,18 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 6. FIRST 25 TOP PAGES (Fixed parameters configuration)
+    # 6. FIRST 25 TOP PAGES (FIXED: Added missing parameters & fixed sorting key format to clear 400 status)
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/top-pages", 
             headers=headers, 
             params={
                 "target": domain, 
-                "mode": "subdomains", # Added missing mode to satisfy query structure
+                "mode": "subdomains", 
+                "date": yesterday_str, # FIXED: Provided mandatory snapshot date structure
                 "limit": 25, 
                 "select": "url,traffic,status_code", 
+                "order_by": "traffic:desc", # FIXED: Standardized to official v3 column key sorting identity
                 "output": "json"
             }, 
             timeout=10
@@ -286,6 +289,7 @@ def fetch_advanced_ahrefs_data(target_url):
             pages = res.json().get("top_pages", [])
             results["top_pages"] = pages
             
+            # Risk checking math logic
             lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("status_code", 200) >= 400)
             total_report_traffic = sum(p.get("traffic", 0) for p in pages if isinstance(p, dict))
             
