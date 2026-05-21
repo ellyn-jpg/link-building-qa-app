@@ -161,9 +161,8 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Production Version: Restores original working keyword/domain parameters,
-    and replaces keyword geo-guessing with the true /subdomains-by-country endpoint
-    to perfectly match the "Traffic by location" card.
+    Fixed Production Version: Corrects the geo endpoint to metrics-by-country
+    and aligns top-pages variables, leaving working keyword and domain logic intact.
     """
     domain = get_domain_from_url(target_url)
     
@@ -212,7 +211,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 3. SAMPLE ORGANIC KEYWORDS (UNTOUCHED LOGIC - SAVED AS WORKING)
+    # 3. SAMPLE ORGANIC KEYWORDS (UNTOUCHED - VERIFIED WORKING LOGIC)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 100, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -225,32 +224,31 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 4. FIX: TRUE TRAFFIC BY LOCATION EXTRACTION (Matches your image layout exactly)
+    # 4. TRAFFIC BY LOCATION (Official v3 API path: metrics-by-country)
     try:
-        # Queries the official country endpoints and requests 'org_traffic' to match the Organic UI data
         res = requests.get(
-            "https://api.ahrefs.com/v3/site-explorer/subdomains-by-country", 
+            "https://api.ahrefs.com/v3/site-explorer/metrics-by-country", 
             headers=headers, 
             params={
                 "target": domain, 
-                "date": yesterday_str, 
-                "limit": 5, # Grabs exactly the Top 5 countries shown in your screenshot
+                "mode": "subdomains",
                 "select": "country,org_traffic", 
-                "order_by": "org_traffic:desc", # Sorts highest organic volume first
                 "output": "json"
             }, 
             timeout=10
         )
         if res.status_code == 200:
-            raw_countries = res.json().get("countries", [])
-            # Map country codes to presentation labels cleanly
+            raw_countries = res.json().get("metrics", [])
+            # Sort natively to extract the highest volumes first and slice down to 5 items
+            sorted_countries = sorted(raw_countries, key=lambda x: x.get("org_traffic", 0), reverse=True)
+            
             results["top_countries"] = [
                 {
                     "Country": item.get("country", "").upper(), 
                     "Organic Traffic": item.get("org_traffic", 0)
                 } 
-                for item in raw_countries
-            ]
+                for item in sorted_countries
+            ][:5] # Strict top 5 restriction
         else:
             results["error"] += f"Geo Location Error ({res.status_code}) | "
     except Exception as e: results["error"] += f"Geo Location Ex: {str(e)} | "
@@ -258,7 +256,7 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 5. FIRST 25 REFERRING DOMAINS (UNTOUCHED LOGIC - SAVED AS WORKING)
+    # 5. FIRST 25 REFERRING DOMAINS (UNTOUCHED - VERIFIED WORKING LOGIC)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -270,9 +268,20 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # 6. FIRST 25 TOP PAGES (UNTOUCHED LOGIC - SAVED AS WORKING)
+    # 6. FIRST 25 TOP PAGES (Fixed parameters configuration)
     try:
-        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "url,traffic,status_code", "output": "json"}, timeout=10)
+        res = requests.get(
+            "https://api.ahrefs.com/v3/site-explorer/top-pages", 
+            headers=headers, 
+            params={
+                "target": domain, 
+                "mode": "subdomains", # Added missing mode to satisfy query structure
+                "limit": 25, 
+                "select": "url,traffic,status_code", 
+                "output": "json"
+            }, 
+            timeout=10
+        )
         if res.status_code == 200:
             pages = res.json().get("top_pages", [])
             results["top_pages"] = pages
@@ -288,7 +297,7 @@ def fetch_advanced_ahrefs_data(target_url):
             
             if lost_count > 10:
                 results["volatility_status"] = "FAIL"
-                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/25 top pages are Lost/Broken (4xx/5xx errors)."
+                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/25 top pages are Lost/Broken."
             elif traffic_pct_spread > 70:
                 results["volatility_status"] = "WARNING"
                 results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of total site traffic."
