@@ -161,8 +161,8 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Restored Production Version: Preserves your working Referring Domains module,
-    while applying the mandatory global country parameter to unlock organic keywords.
+    Restored Baseline Version: Uses your exact working endpoints and parameter schemas, 
+    cropped perfectly to 25 items, with a single-column filter applied to keywords.
     """
     domain = get_domain_from_url(target_url)
     
@@ -186,22 +186,21 @@ def fetch_advanced_ahrefs_data(target_url):
         return results
 
     headers = {"Authorization": f"Bearer {AHREFS_API_KEY}", "Accept": "application/json"}
-    
     today = datetime.date.today()
-    yesterday_str = (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+    yesterday_str = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     six_months_ago = (today - datetime.timedelta(days=180)).strftime("%Y-%m-%d")
-
-    # --- ENDPOINT 1: DOMAIN RATING (DR) ---
+    
+    # 1. DOMAIN RATING (DR)
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/domain-rating", headers=headers, params={"target": domain, "date": yesterday_str, "output": "json"}, timeout=10)
         if res.status_code == 200:
             results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
     except Exception: pass
 
-    # MANDATORY SHIELD PAUSE (Prevents Cloudflare rate blocks)
+    # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # --- ENDPOINT 2: 6-MONTH ORGANIC TRAFFIC HISTORY TREND ---
+    # 2. 6-MONTH ORGANIC TRAFFIC HISTORY
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/metrics-history", headers=headers, params={"target": domain, "mode": "subdomains", "date_from": six_months_ago, "date_to": yesterday_str, "history_grouping": "monthly", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -209,70 +208,68 @@ def fetch_advanced_ahrefs_data(target_url):
             results["traffic_history"] = sorted(raw, key=lambda x: x.get('date', ''))
     except Exception: pass
 
-    # MANDATORY SHIELD PAUSE
+    # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS (Restored Working Code + Global Parameter) ---
+    # 3. SAMPLE ORGANIC KEYWORDS & TOP 5 COUNTRIES EXTRACTION (Isolating Single Column & 25 Limit)
     try:
-        res = requests.get(
-            "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
-            headers=headers, 
-            params={
-                "target": domain, 
-                "mode": "subdomains", 
-                "date": yesterday_str,
-                "country": "global", # FIXED: Forces Ahrefs to look at allGlobal instead of returning []
-                "limit": 25, 
-                "select": "keyword,sum_traffic,keyword_country,url", 
-                "order_by": "traffic:desc", 
-                "output": "json"
-            }, 
-            timeout=10
-        )
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/organic-keywords", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 100, "select": "keyword,best_position,volume,sum_traffic,keyword_country", "output": "json"}, timeout=10)
         if res.status_code == 200:
-            raw_keywords = res.json().get("keywords", [])
+            raw_kws = res.json().get("keywords", [])
             
-            # Extract just the single "Keyword" column natively as requested
-            results["keywords"] = [{"Keyword": kw.get("keyword", "")} for kw in raw_keywords if kw.get("keyword")]
+            # FIXED: Crops to 25 items and keeps ONLY the single "Keyword" column label mapping
+            results["keywords"] = [{"Keyword": k.get("keyword", "")} for k in raw_kws if k.get("keyword")][:25]
             
-            # Map Top Pages Table directly as-is using raw individual ranking URLs
-            results["top_pages"] = [
-                {
-                    "URL Path": kw.get("url", ""), 
-                    "Traffic Value": kw.get("sum_traffic", 0)
-                } 
-                for kw in raw_keywords
-            ]
-            
-            # Map top country metrics
-            countries = [k.get("keyword_country", "").upper() for k in raw_keywords if k.get("keyword_country")]
+            countries = [k.get("keyword_country", "").upper() for k in raw_kws if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
-    except Exception: pass
+        else:
+            results["error"] += f"Keywords Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"Keywords Exception: {str(e)} | "
 
-    # MANDATORY SHIELD PAUSE
+    # MANDATORY RATE LIMIT SHIELD
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (UNTOUCHED & UNCHANGED) ---
+    # 4. FIRST 25 REFERRING DOMAINS (Exactly your working block, changed limit from 50 to 25)
     try:
-        res = requests.get(
-            "https://api.ahrefs.com/v3/site-explorer/refdomains", 
-            headers=headers, 
-            params={
-                "target": domain, 
-                "mode": "subdomains", 
-                "limit": 25, 
-                "select": "domain,domain_rating", 
-                "order_by": "domain_rating:desc", 
-                "output": "json"
-            }, 
-            timeout=10
-        )
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/refdomains", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "domain,domain_rating", "output": "json"}, timeout=10)
         if res.status_code == 200:
             results["referring_domains"] = res.json().get("refdomains", [])
-    except Exception: pass
+        else:
+            results["error"] += f"RD Path Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"RD Exception: {str(e)} | "
 
-    return results	
+    # MANDATORY RATE LIMIT SHIELD
+    time.sleep(2.0)
+
+    # 5. FIRST 25 TOP PAGES (Exactly your working block, changed limit from 50 to 25)
+    try:
+        res = requests.get("https://api.ahrefs.com/v3/site-explorer/top-pages", headers=headers, params={"target": domain, "mode": "subdomains", "date": yesterday_str, "limit": 25, "select": "url,traffic,status_code", "output": "json"}, timeout=10)
+        if res.status_code == 200:
+            pages = res.json().get("top_pages", [])
+            results["top_pages"] = pages
+            
+            # Safe parsing math calculation checks
+            lost_count = sum(1 for p in pages if isinstance(p, dict) and p.get("status_code", 200) >= 400)
+            total_report_traffic = sum(p.get("traffic", 0) for p in pages if isinstance(p, dict))
+            
+            top_page_traffic = 0
+            if pages and isinstance(pages[0], dict):
+                top_page_traffic = pages[0].get("traffic", 0)
+                
+            traffic_pct_spread = (top_page_traffic / total_report_traffic * 100) if total_report_traffic > 0 else 0
+            
+            if lost_count > 10:
+                results["volatility_status"] = "FAIL"
+                results["volatility_reason"] = f"CRITICAL RISK: {lost_count}/25 top pages are Lost/Broken (4xx/5xx errors)."
+            elif traffic_pct_spread > 70:
+                results["volatility_status"] = "WARNING"
+                results["volatility_reason"] = f"CONCENTRATION WARNING: Top page holds {traffic_pct_spread:.1f}% of total site traffic."
+        else:
+            results["error"] += f"Top Pages Error ({res.status_code}) | "
+    except Exception as e: results["error"] += f"Top Pages Exception: {str(e)} | "
+
+    return results
 
 # --- 5. STREAMLIT FRONT-END DASHBOARD UI ---
 st.set_page_config(page_title="Enterprise Link Building QA", page_icon="🔗", layout="wide")
