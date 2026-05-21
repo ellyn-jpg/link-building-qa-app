@@ -161,9 +161,10 @@ import time # Double-check that 'import time' is at the very top of your file!
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Final Calibrated Version: Cleans keyword structures into a strict single-column 
-    dictionary list natively, ensuring Streamlit always displays the first 25 results.
+    Root Domain Target Version: Automatically extracts the clean root domain
+    from any input URL and pulls exactly 25 items sorted correctly from Ahrefs.
     """
+    # Natively extract just the root domain (e.g., 'europeanbusinessmagazine.com')
     domain = get_domain_from_url(target_url)
     
     results = {
@@ -198,10 +199,10 @@ def fetch_advanced_ahrefs_data(target_url):
             results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
     except Exception: pass
 
-    # MANDATORY SHIELD PAUSE
+    # MANDATORY SHIELD PAUSE (Bypasses Cloudflare rate limits safely)
     time.sleep(2.0)
 
-    # --- ENDPOINT 2: TRAFFIC HISTORY TREND ---
+    # --- ENDPOINT 2: 6-MONTH ORGANIC TRAFFIC HISTORY TREND ---
     try:
         res = requests.get("https://api.ahrefs.com/v3/site-explorer/metrics-history", headers=headers, params={"target": domain, "mode": "subdomains", "date_from": six_months_ago, "date_to": yesterday_str, "history_grouping": "monthly", "output": "json"}, timeout=10)
         if res.status_code == 200:
@@ -212,17 +213,18 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 3: ORGANIC KEYWORDS & TOP PAGES (Strictly 25 Line Items) ---
+    # --- ENDPOINT 3: ORGANIC KEYWORDS (Sorted by Highest Traffic Share First) ---
     try:
+        # Targeting the extracted 'domain' and using 'mode': 'subdomains'
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/organic-keywords", 
             headers=headers, 
             params={
                 "target": domain, 
-                "mode": "subdomains", 
-                "limit": 25, 
-                "select": "keyword,sum_traffic,keyword_country,url", 
-                "order_by": "traffic:desc", 
+                "mode": "subdomains", # Pulls the global domain asset footprint
+                "limit": 25, # Limits response strictly to your first 25 lines
+                "select": "keyword,traffic,url,keyword_country", 
+                "order_by": "traffic:desc", # Native backend mapping for traffic descending
                 "output": "json"
             }, 
             timeout=10
@@ -230,19 +232,19 @@ def fetch_advanced_ahrefs_data(target_url):
         if res.status_code == 200:
             raw_keywords = res.json().get("keywords", [])
             
-            # 1. FIXED: Extract JUST the "Keyword" column natively as an isolated dictionary list
+            # Extract just the single "Keyword" column natively as requested
             results["keywords"] = [{"Keyword": kw.get("keyword", "")} for kw in raw_keywords if kw.get("keyword")]
             
-            # 2. Map Top Pages Table with standard URL path keys
+            # Map Top Pages Table directly as-is with raw ranking individual URLs from the report
             results["top_pages"] = [
                 {
                     "URL Path": kw.get("url", ""), 
-                    "Traffic Value": kw.get("sum_traffic", 0)
+                    "Traffic Value": kw.get("traffic", 0)
                 } 
                 for kw in raw_keywords
             ]
             
-            # 3. Map country distributions safely
+            # Map top country metrics
             countries = [k.get("keyword_country", "").upper() for k in raw_keywords if k.get("keyword_country")]
             top_five = Counter(countries).most_common(5)
             results["top_countries"] = [{"country": c, "count": cnt} for c, cnt in top_five]
@@ -251,14 +253,14 @@ def fetch_advanced_ahrefs_data(target_url):
     # MANDATORY SHIELD PAUSE
     time.sleep(2.0)
 
-    # --- ENDPOINT 4: REFERRING DOMAINS (Strictly 25 Line Items) ---
+    # --- ENDPOINT 4: REFERRING DOMAINS (Sorted by Highest DR First) ---
     try:
         res = requests.get(
             "https://api.ahrefs.com/v3/site-explorer/refdomains", 
             headers=headers, 
             params={
                 "target": domain, 
-                "mode": "subdomains", 
+                "mode": "subdomains", # Pulls the global domain asset footprint
                 "limit": 25, 
                 "select": "domain,domain_rating", 
                 "order_by": "domain_rating:desc", 
