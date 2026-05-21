@@ -429,7 +429,7 @@ if submitted:
                     st.markdown("#### 🌍 Top 5 Geo-Traffic Locations")
                     if ahrefs_results["top_countries"]:
                         for item in ahrefs_results["top_countries"]:
-                            st.write(f"🏳️‍🌈 **{item['country']}**: Common in Top Ranking Clusters")
+st.write(f"🏳️‍🌈 **{item['Country']}**: Common in Top Ranking Clusters")
                     else: st.caption("No geographical country distributions populated.")
                 with c_right:
                     st.markdown("#### 🛠️ Core Metric Summary Indicators")
