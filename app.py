@@ -161,12 +161,12 @@ import time # Ensure this is imported at the top of your file to support time de
 
 def fetch_advanced_ahrefs_data(target_url):
     """
-    Verified API v3 Core Version: Queries the official /domain-rating endpoint
-    directly to guarantee a clean connection without 404 paths or 429 rate limit triggers.
+    Core API v3 Data Loader: Pulls live Domain Rating from Ahrefs,
+    and structures clean, readable datasets for your report tables.
     """
     domain = get_domain_from_url(target_url)
     
-    # Pre-populate complete default structures so the Streamlit layout renders smoothly
+    # Initialize dictionary structures with zero/empty fallbacks instead of placeholder text
     results = {
         "dr": "N/A",
         "traffic_history": None,
@@ -189,18 +189,17 @@ def fetch_advanced_ahrefs_data(target_url):
     headers = {"Authorization": f"Bearer {AHREFS_API_KEY}", "Accept": "application/json"}
     today = datetime.date.today()
     
-    # Rolling snapshot fallback targets
+    # Generate 3 fallback dates to step through data synchronization gaps safely
     target_dates = [
         (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
         (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
         (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d")
     ]
 
-    # 1. CORE DOMAIN RATING (DR) RETRIEVAL
+    # 1. FETCH LIVE DOMAIN RATING (DR)
     dr_fetched = False
     for date_str in target_dates:
         try:
-            # Official, verified API v3 path for single-endpoint authority collection
             res = requests.get(
                 "https://api.ahrefs.com/v3/site-explorer/domain-rating", 
                 headers=headers, 
@@ -211,36 +210,33 @@ def fetch_advanced_ahrefs_data(target_url):
                 results["dr"] = res.json().get("domain_rating", {}).get("domain_rating", "N/A")
                 dr_fetched = True
                 break
-            elif res.status_code == 404:
-                continue
         except Exception: pass
 
-    # Handle fallback logging if no explicit DR metrics are found
     if not dr_fetched:
         results["dr"] = "N/A"
 
-    # 2. STREAMLINED REPORT STUBS (Prevents multi-call 429 rate flags)
-    # Populates clean placeholder data frames to keep your data tables active and legible
+    # 2. FORMAT REPORT DATASETS
+    # This formats empty structured lists so your tables display clean, empty rows instead of text strings
     results["keywords"] = [
-        {"keyword": "Main Organic Visibility Anchor", "best_position": "Tracked", "volume": "Available in Core Tier Plan"}
+        {"Keyword": "No records fetched", "Position": "-", "Volume": 0}
     ]
     results["referring_domains"] = [
-        {"domain": "Backlink Asset Network Index", "domain_rating": "Available in Core Tier Plan"}
+        {"Domain": "No records fetched", "Domain Rating": "-"}
     ]
     results["top_pages"] = [
-        {"url": "Sitewide Structure Subfolders Index", "sum_traffic": "Available in Core Tier Plan"}
+        {"URL Path": "No records fetched", "Traffic Share": "0%"}
     ]
     results["top_countries"] = [
-        {"country": "GLOBAL PROFILE ACTIVE", "count": 1}
+        {"country": "GLOBAL DATA", "count": 0}
     ]
     
-    # Provide a baseline trend line placeholder for the plotting dashboard component
+    # Empty chart timeline initialization
     results["traffic_history"] = [
-        {"date": "2026-01", "org_traffic": 100},
-        {"date": "2026-02", "org_traffic": 110},
-        {"date": "2026-03", "org_traffic": 105},
-        {"date": "2026-04", "org_traffic": 120},
-        {"date": "2026-05", "org_traffic": 125}
+        {"date": "2026-01", "org_traffic": 0},
+        {"date": "2026-02", "org_traffic": 0},
+        {"date": "2026-03", "org_traffic": 0},
+        {"date": "2026-04", "org_traffic": 0},
+        {"date": "2026-05", "org_traffic": 0}
     ]
 
     return results
